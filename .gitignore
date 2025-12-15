@@ -17,3 +17,6 @@ __pycache__/
 .env
 .env.local
 
+# Exclude Downloads folder (contains unrelated projects)
+Downloads/
+
