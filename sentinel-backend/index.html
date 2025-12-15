@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Match IQ - Paramount+</title>
+    
+    <!-- TailwindCSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Vue.js 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        * {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        
+        body {
+            background: #020617;
+            color: #f1f5f9;
+        }
+        
+        /* Custom scrollbar */
+        .feed-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .feed-scroll::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        
+        .feed-scroll::-webkit-scrollbar-thumb {
+            background: #0064FF;
+            border-radius: 3px;
+        }
+        
+        /* Video container */
+        .video-container {
+            position: relative;
+            background: #000;
+        }
+        
+        /* Active event glow */
+        .event-card.active {
+            box-shadow: 0 0 20px rgba(0, 100, 255, 0.5);
+            transform: scale(1.02);
+            border-color: #0064FF;
+        }
+        
+        /* Smooth transitions */
+        .event-card {
+            transition: all 0.3s ease;
+        }
+        
+        /* Card animation */
+        .card-enter-active {
+            transition: all 0.5s ease-out;
+        }
+        .card-enter-from {
+            opacity: 0;
+            transform: translateY(20px) scale(0.95);
+        }
+        .card-enter-to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+        .card-move {
+            transition: transform 0.3s ease;
+        }
+        
+        /* Subtle tactical overlay animations */
+        .tactical-enter-active {
+            transition: all 0.3s ease-out;
+        }
+        .tactical-enter-from {
+            opacity: 0;
+            transform: scale(0.9);
+        }
+        .tactical-enter-to {
+            opacity: 1;
+            transform: scale(1);
+        }
+        .tactical-leave-active {
+            transition: all 0.2s ease-in;
+        }
+        .tactical-leave-from {
+            opacity: 1;
+        }
+        .tactical-leave-to {
+            opacity: 0;
+            transform: scale(0.9);
+        }
+        
+        /* Subtle pulse animation for ground highlight */
+        @keyframes subtle-pulse {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.1); }
+        }
+        
+        .animate-pulse {
+            animation: subtle-pulse 2s ease-in-out infinite;
+        }
+        
+        /* Animated dash for movement lines */
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+        
+        .animate-dash {
+            animation: dash 1s linear infinite;
+        }
+        
+        /* Line clamp utility */
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        
+        /* Type badges */
+        .badge-GOAL {
+            background: #10b981;
+        }
+        .badge-FOUL {
+            background: #f59e0b;
+        }
+        .badge-SUBSTITUTION {
+            background: #3b82f6;
+        }
+        .badge-NORMAL {
+            background: #64748b;
+        }
+        
+        /* Line clamp utility */
+        .line-clamp-3 {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="border-b border-[#1e293b] px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <h1 class="text-2xl font-bold tracking-wide uppercase">Match IQ</h1>
+                    <span class="px-3 py-1 bg-[#0064FF] text-xs font-semibold uppercase tracking-wider rounded">Live Tracking</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex h-[calc(100vh-73px)]">
+            <!-- Left: Video Player (75%) -->
+            <div class="w-3/4 video-container relative">
+                <div v-if="!videoUrl && !isAnalyzing" class="h-full flex items-center justify-center">
+                    <!-- Upload Area -->
+                    <div 
+                        @drop.prevent="handleDrop"
+                        @dragover.prevent
+                        @dragenter.prevent
+                        class="border-2 border-dashed border-[#1e293b] rounded-lg p-12 text-center cursor-pointer hover:border-[#0064FF] transition-colors"
+                        @click="triggerFileInput"
+                    >
+                        <input 
+                            ref="fileInput"
+                            type="file" 
+                            accept="video/*" 
+                            @change="handleFileSelect"
+                            class="hidden"
+                        >
+                        <div class="text-6xl mb-4">📹</div>
+                        <h3 class="text-xl font-semibold mb-2 uppercase tracking-wide">Upload Match Video</h3>
+                        <p class="text-sm text-slate-400">Drag and drop or click to select</p>
+                    </div>
+                </div>
+                
+                <div v-if="isAnalyzing" class="h-full flex items-center justify-center">
+                    <div class="text-center">
+                        <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-[#0064FF] mx-auto mb-4"></div>
+                        <p class="text-lg uppercase tracking-wide">Analyzing Match...</p>
+                        <p class="text-sm text-slate-400 mt-2">This may take a few minutes</p>
+                    </div>
+                </div>
+                
+                <div v-if="videoUrl && !isAnalyzing" class="h-full flex flex-col relative">
+                    <video 
+                        ref="videoPlayer"
+                        :src="videoUrl" 
+                        controls
+                        class="w-full h-full object-contain"
+                        @timeupdate="onVideoTimeUpdate"
+                        @loadedmetadata="onVideoLoaded"
+                    ></video>
+                    
+                    <!-- Visual Overlays: Movement Lines & Statistics -->
+                    <transition-group
+                        v-if="events.length > 0"
+                        name="tactical"
+                        tag="div"
+                        class="absolute inset-0 pointer-events-none"
+                    >
+                        <div 
+                            v-for="(event, index) in activeTacticalOverlays" 
+                            :key="event.time + index"
+                            class="absolute"
+                            :style="getTacticalOverlayStyle(event, index)"
+                        >
+                            <!-- Movement Lines Overlay -->
+                            <svg v-if="event.stats && (event.type === 'GOAL' || event.type === 'FOUL')" 
+                                 class="absolute -inset-20 w-[140%] h-[140%]" 
+                                 style="pointer-events: none; overflow: visible;">
+                                <!-- Player movement path (curved line) -->
+                                <path 
+                                    :d="getMovementPath(event.type, index)"
+                                    stroke="#0064FF"
+                                    stroke-width="2"
+                                    fill="none"
+                                    stroke-dasharray="5,5"
+                                    opacity="0.5"
+                                    class="animate-dash"
+                                />
+                                
+                                <!-- Arrow head at end of path -->
+                                <circle 
+                                    :cx="event.type === 'GOAL' ? '80%' : '70%'"
+                                    :cy="event.type === 'GOAL' ? '30%' : '55%'"
+                                    r="3"
+                                    fill="#0064FF"
+                                    opacity="0.8"
+                                />
+                            </svg>
+                            
+                            <!-- Statistics Overlay Badge -->
+                            <div class="bg-[#020617]/90 backdrop-blur-md border border-[#0064FF]/40 rounded-lg px-2.5 py-1.5 shadow-xl">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-[9px] font-mono text-[#0064FF]">{{ event.time }}</span>
+                                    <span class="w-1 h-1 rounded-full" :class="getEventDotColor(event.type)"></span>
+                                </div>
+                                
+                                <!-- Key Stats Display -->
+                                <div v-if="event.stats" class="space-y-0.5">
+                                    <div v-if="event.stats.possession" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">POS</span>
+                                            <span class="text-[10px] font-mono text-[#0064FF] font-semibold">{{ formatStat(event.stats.possession) }}%</span>
+                                        </div>
+                                        <div v-if="event.stats.possession_team" class="text-[7px] text-slate-500 italic">{{ event.stats.possession_team }}</div>
+                                    </div>
+                                    <div v-if="event.stats.passes" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">PASS</span>
+                                            <span class="text-[10px] font-mono text-white">{{ formatStat(event.stats.passes) }}</span>
+                                        </div>
+                                        <div v-if="event.stats.passes_team" class="text-[7px] text-slate-500 italic">{{ event.stats.passes_team }}</div>
+                                    </div>
+                                    <div v-if="event.stats.speed" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">SPD</span>
+                                            <span class="text-[10px] font-mono text-white">{{ event.stats.speed }}</span>
+                                        </div>
+                                        <div v-if="event.stats.speed_player" class="text-[7px] text-slate-500 italic">{{ event.stats.speed_player }}</div>
+                                    </div>
+                                    <div v-if="event.stats.distance" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">DIST</span>
+                                            <span class="text-[10px] font-mono text-white">{{ event.stats.distance }}</span>
+                                        </div>
+                                        <div v-if="event.stats.distance_player" class="text-[7px] text-slate-500 italic">{{ event.stats.distance_player }}</div>
+                                    </div>
+                                    <div v-if="event.stats.pressure" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">PRESS</span>
+                                            <span class="text-[10px] font-mono text-white">{{ event.stats.pressure }}</span>
+                                        </div>
+                                        <div v-if="event.stats.pressure_team" class="text-[7px] text-slate-500 italic">{{ event.stats.pressure_team }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Ground Highlight Circle (for key events) -->
+                            <div v-if="event.type === 'GOAL' || event.type === 'FOUL'" 
+                                 class="absolute"
+                                 :style="getGroundHighlightStyle(event.type)">
+                                <div class="w-16 h-16 border border-[#0064FF]/40 rounded-full animate-pulse">
+                                    <div class="w-full h-full border border-[#0064FF]/20 rounded-full"></div>
+                                    <!-- Center point -->
+                                    <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-[#0064FF] rounded-full"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </transition-group>
+                    
+                </div>
+            </div>
+
+            <!-- Right: Intelligence Feed (25%) -->
+            <div class="w-1/4 border-l border-[#1e293b] flex flex-col">
+                <div class="px-4 py-3 border-b border-[#1e293b]">
+                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">Intelligence Feed</h2>
+                </div>
+                
+                <div 
+                    ref="feedContainer"
+                    class="flex-1 overflow-y-auto feed-scroll p-4 space-y-3"
+                >
+                    <div v-if="events.length === 0 && !isAnalyzing" class="text-center text-slate-500 py-8">
+                        <p class="text-sm">No events detected yet.</p>
+                        <p class="text-xs mt-2">Upload a video to begin analysis.</p>
+                    </div>
+                    
+                    <transition-group
+                        name="card"
+                        tag="div"
+                        appear
+                    >
+                        <div 
+                            v-for="(event, index) in visibleEventCards" 
+                            :key="index"
+                            :ref="el => { if (el) eventRefs[index] = el }"
+                            :class="['event-card p-3 rounded-lg border bg-[#0f172a] mb-3', 
+                                     isEventActive(event) ? 'active border-[#0064FF]' : 'border-[#1e293b]']"
+                        >
+                            <div class="flex items-start justify-between mb-1.5">
+                                <span class="text-xs font-mono text-[#0064FF]">{{ event.time }}</span>
+                                <span :class="['badge-' + event.type, 'px-2 py-0.5 text-xs font-semibold uppercase rounded']">
+                                    {{ event.type }}
+                                </span>
+                            </div>
+                            <h3 class="font-semibold text-sm mb-1.5">{{ event.title }}</h3>
+                            <p class="text-xs text-slate-400 leading-relaxed mb-2">{{ event.desc }}</p>
+                            
+                            <!-- Statistics Display -->
+                            <div v-if="event.stats" class="grid grid-cols-2 gap-1.5 mt-2 pt-2 border-t border-[#1e293b]">
+                                <div v-if="event.stats.possession" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">POS</span>
+                                    <span class="text-[10px] font-mono text-[#0064FF]">{{ formatStat(event.stats.possession) }}%</span>
+                                </div>
+                                <div v-if="event.stats.passes" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">PASS</span>
+                                    <span class="text-[10px] font-mono text-white">{{ formatStat(event.stats.passes) }}</span>
+                                </div>
+                                <div v-if="event.stats.speed" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">SPD</span>
+                                    <span class="text-[10px] font-mono text-white">{{ event.stats.speed }}</span>
+                                </div>
+                                <div v-if="event.stats.pressure" class="flex items-center gap-1 group relative">
+                                    <span class="text-[9px] text-slate-500 uppercase">PRS</span>
+                                    <span :class="['text-[10px] font-semibold cursor-help', getPressureColor(event.stats.pressure)]">{{ event.stats.pressure }}</span>
+                                    <!-- Tooltip explaining PRS -->
+                                    <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50">
+                                        <div class="bg-[#020617] border border-[#0064FF]/40 rounded-lg px-2 py-1 text-[9px] text-slate-300 shadow-xl max-w-[180px]">
+                                            <div class="font-semibold text-[#0064FF] mb-0.5">PRS = Pressure</div>
+                                            <div>Defensive pressure intensity: High = intense pressing, Medium = moderate, Low = passive</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </transition-group>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, watch, nextTick, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const videoPlayer = ref(null);
+                const feedContainer = ref(null);
+                const fileInput = ref(null);
+                const eventRefs = ref({});
+                
+                const videoUrl = ref(null);
+                const videoFile = ref(null);
+                const events = ref([]);
+                const isAnalyzing = ref(false);
+                const currentTime = ref(0);
+
+                // Convert MM:SS to seconds
+                function timeToSeconds(timeStr) {
+                    if (!timeStr) return 0;
+                    const parts = timeStr.split(':');
+                    if (parts.length === 2) {
+                        return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+                    }
+                    return 0;
+                }
+
+                // Check if event is active (within 2-second window)
+                function isEventActive(event) {
+                    if (!videoPlayer.value) return false;
+                    const eventTime = timeToSeconds(event.time);
+                    const diff = Math.abs(currentTime.value - eventTime);
+                    return diff <= 2;
+                }
+
+                // Get visible event cards (appear one by one as video plays)
+                const visibleEventCards = computed(() => {
+                    if (!videoPlayer.value || events.value.length === 0) return events.value;
+                    // Show events that have already occurred (with 1 second buffer)
+                    return events.value.filter(event => {
+                        const eventTime = timeToSeconds(event.time);
+                        return currentTime.value >= eventTime - 1; // Show 1 second before timestamp
+                    });
+                });
+
+                // Get active tactical overlays (show when event is active)
+                const activeTacticalOverlays = computed(() => {
+                    if (!videoPlayer.value || events.value.length === 0) return [];
+                    return events.value.filter(event => {
+                        const eventTime = timeToSeconds(event.time);
+                        const diff = Math.abs(currentTime.value - eventTime);
+                        return diff <= 3; // Show overlay 3 seconds before/after event
+                    });
+                });
+
+                // Get compact, subtle insight (max 60 chars)
+                function getCompactInsight(event) {
+                    const desc = event.desc || '';
+                    const sentences = desc.split(/[.!?]+/).filter(s => s.trim());
+                    const tacticalKeywords = ['formation', 'tactical', 'positioning', 'press', 'space', 'defensive', 'offensive', 'strategy', 'shape', 'line'];
+                    
+                    // Find most tactical sentence
+                    for (const sentence of sentences) {
+                        const lower = sentence.toLowerCase();
+                        if (tacticalKeywords.some(keyword => lower.includes(keyword))) {
+                            const compact = sentence.trim().substring(0, 60);
+                            return compact + (sentence.length > 60 ? '...' : '');
+                        }
+                    }
+                    
+                    // Fallback: first sentence, truncated
+                    const first = sentences[0]?.trim() || desc;
+                    return first.substring(0, 60) + (first.length > 60 ? '...' : '');
+                }
+
+                // Get event dot color
+                function getEventDotColor(type) {
+                    const colors = {
+                        'GOAL': 'bg-green-500',
+                        'FOUL': 'bg-yellow-500',
+                        'SUBSTITUTION': 'bg-blue-500',
+                        'NORMAL': 'bg-slate-500'
+                    };
+                    return colors[type] || 'bg-slate-500';
+                }
+
+                // Get subtle overlay positioning (corners and edges, non-intrusive)
+                function getTacticalOverlayStyle(event, index) {
+                    // Position in corners/edges to avoid blocking action
+                    const positions = [
+                        { top: '8%', right: '4%' },      // Top right
+                        { top: '8%', left: '4%' },       // Top left
+                        { bottom: '12%', right: '4%' },  // Bottom right
+                        { bottom: '12%', left: '4%' },   // Bottom left
+                        { top: '50%', right: '4%', transform: 'translateY(-50%)' }, // Middle right
+                    ];
+                    
+                    const position = positions[index % positions.length];
+                    const offset = Math.floor(index / positions.length) * 35;
+                    
+                    return {
+                        ...position,
+                        top: position.top ? `calc(${position.top} + ${offset}px)` : position.top,
+                        bottom: position.bottom ? `calc(${position.bottom} + ${offset}px)` : position.bottom,
+                        zIndex: 10 + index
+                    };
+                }
+
+                // Get ground highlight positioning (on field, not blocking)
+                function getGroundHighlightStyle(eventType) {
+                    // Position highlight circles on field areas (not blocking key action)
+                    const positions = {
+                        'GOAL': { bottom: '25%', left: '45%' },      // Near goal area
+                        'FOUL': { bottom: '35%', left: '50%', transform: 'translateX(-50%)' }, // Center field
+                    };
+                    
+                    return positions[eventType] || { bottom: '30%', left: '50%', transform: 'translateX(-50%)' };
+                }
+
+                // Format statistics (handle ranges like "45-65" or single values)
+                function formatStat(stat) {
+                    if (typeof stat === 'string') return stat;
+                    if (typeof stat === 'number') return stat;
+                    if (Array.isArray(stat)) {
+                        return stat.join('-');
+                    }
+                    return stat;
+                }
+
+                // Get pressure color
+                function getPressureColor(pressure) {
+                    const colors = {
+                        'High': 'text-red-400',
+                        'Medium': 'text-yellow-400',
+                        'Low': 'text-green-400'
+                    };
+                    return colors[pressure] || 'text-slate-400';
+                }
+
+                // Get movement path for SVG (curved line showing player movement)
+                function getMovementPath(eventType, index) {
+                    // Create a curved path based on event type
+                    const paths = {
+                        'GOAL': `M 20% 60% Q 50% 40%, 80% 30%`,  // Forward attacking movement
+                        'FOUL': `M 30% 50% Q 50% 60%, 70% 55%`,  // Defensive pressure
+                    };
+                    
+                    // Vary path slightly for multiple events
+                    const basePath = paths[eventType] || `M 25% 50% Q 50% 45%, 75% 50%`;
+                    return basePath;
+                }
+
+                // Get pressure position on field
+                function getPressurePosition(pressure) {
+                    const positions = {
+                        'High': { x: 45, y: 35 },      // Near goal
+                        'Medium': { x: 50, y: 50 },   // Midfield
+                        'Low': { x: 55, y: 65 }       // Defensive third
+                    };
+                    return positions[pressure] || { x: 50, y: 50 };
+                }
+
+                // Get pressure zone radius
+                function getPressureRadius(pressure) {
+                    const radii = {
+                        'High': 8,
+                        'Medium': 12,
+                        'Low': 15
+                    };
+                    return radii[pressure] || 10;
+                }
+
+                // Get pressure zone style
+                function getPressureZoneStyle(pressure) {
+                    const positions = {
+                        'High': { bottom: '30%', left: '45%' },
+                        'Medium': { bottom: '45%', left: '50%', transform: 'translateX(-50%)' },
+                        'Low': { bottom: '60%', left: '55%' }
+                    };
+                    return positions[pressure] || { bottom: '45%', left: '50%', transform: 'translateX(-50%)' };
+                }
+
+                // Get pressure zone size
+                function getPressureZoneSize(pressure) {
+                    const sizes = {
+                        'High': 'w-16 h-16',
+                        'Medium': 'w-20 h-20',
+                        'Low': 'w-24 h-24'
+                    };
+                    return sizes[pressure] || 'w-20 h-20';
+                }
+
+                // Get pressure zone color
+                function getPressureZoneColor(pressure) {
+                    const colors = {
+                        'High': 'background: rgba(239, 68, 68, 0.1)',
+                        'Medium': 'background: rgba(234, 179, 8, 0.1)',
+                        'Low': 'background: rgba(34, 197, 94, 0.1)'
+                    };
+                    return colors[pressure] || 'background: rgba(0, 100, 255, 0.1)';
+                }
+
+                // Handle video time update
+                function onVideoTimeUpdate() {
+                    if (videoPlayer.value) {
+                        currentTime.value = videoPlayer.value.currentTime;
+                        scrollToActiveEvent();
+                    }
+                }
+
+                // Scroll feed to active event
+                function scrollToActiveEvent() {
+                    nextTick(() => {
+                        const activeIndex = events.value.findIndex(event => isEventActive(event));
+                        if (activeIndex !== -1 && eventRefs.value[activeIndex] && feedContainer.value) {
+                            const element = eventRefs.value[activeIndex];
+                            const container = feedContainer.value;
+                            const elementTop = element.offsetTop;
+                            const containerHeight = container.clientHeight;
+                            const scrollTop = container.scrollTop;
+                            
+                            // Scroll if element is not visible
+                            if (elementTop < scrollTop || elementTop > scrollTop + containerHeight - 100) {
+                                container.scrollTo({
+                                    top: elementTop - 20,
+                                    behavior: 'smooth'
+                                });
+                            }
+                        }
+                    });
+                }
+
+                // Handle file selection
+                function handleFileSelect(event) {
+                    const file = event.target.files[0];
+                    if (file && file.type.startsWith('video/')) {
+                        videoFile.value = file;
+                        videoUrl.value = URL.createObjectURL(file);
+                        analyzeVideo(file);
+                    }
+                }
+
+                // Handle drag and drop
+                function handleDrop(event) {
+                    const file = event.dataTransfer.files[0];
+                    if (file && file.type.startsWith('video/')) {
+                        videoFile.value = file;
+                        videoUrl.value = URL.createObjectURL(file);
+                        analyzeVideo(file);
+                    }
+                }
+
+                // Trigger file input
+                function triggerFileInput() {
+                    fileInput.value?.click();
+                }
+
+                // Analyze video with backend
+                async function analyzeVideo(file) {
+                    isAnalyzing.value = true;
+                    events.value = [];
+                    
+                    const formData = new FormData();
+                    formData.append('video', file);
+
+                    try {
+                        const response = await fetch('http://localhost:5001/analyze', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok) {
+                            throw new Error(data.error || 'Analysis failed');
+                        }
+
+                        // Handle both response formats
+                        const eventList = Array.isArray(data) ? data : (data.events || []);
+                        events.value = eventList;
+                        
+                        console.log('Analysis complete:', eventList);
+                    } catch (error) {
+                        console.error('Error analyzing video:', error);
+                        alert('Error: ' + error.message);
+                    } finally {
+                        isAnalyzing.value = false;
+                    }
+                }
+
+                // Video loaded metadata
+                function onVideoLoaded() {
+                    console.log('Video loaded, duration:', videoPlayer.value?.duration);
+                }
+
+                // Watch for active events to trigger scroll
+                watch(() => currentTime.value, () => {
+                    scrollToActiveEvent();
+                });
+
+                    return {
+                    videoPlayer,
+                    feedContainer,
+                    fileInput,
+                    eventRefs,
+                    videoUrl,
+                    events,
+                    isAnalyzing,
+                    currentTime,
+                    isEventActive,
+                    visibleEventCards,
+                    activeTacticalOverlays,
+                    getCompactInsight,
+                    getEventDotColor,
+                    getTacticalOverlayStyle,
+                    getGroundHighlightStyle,
+                    formatStat,
+                    getPressureColor,
+                    getMovementPath,
+                    getPressurePosition,
+                    getPressureRadius,
+                    handleFileSelect,
+                    handleDrop,
+                    triggerFileInput,
+                    onVideoTimeUpdate,
+                    onVideoLoaded
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

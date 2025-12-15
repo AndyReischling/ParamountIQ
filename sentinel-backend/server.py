@@ -1,0 +1,479 @@
+import os
+import json
+import time
+import re
+import hashlib
+import threading
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+import google.generativeai as genai
+from pass_a_processor import SoccerEventDetector
+from stats_processor import VideoStatisticsProcessor
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+app = Flask(__name__)
+CORS(app) # CRITICAL: Allows your browser frontend to talk to this python script
+
+
+# CONFIG
+UPLOAD_FOLDER = 'uploads'
+CACHE_FOLDER = 'cache'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(CACHE_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['CACHE_FOLDER'] = CACHE_FOLDER
+
+# Thread lock for cache file operations
+cache_lock = threading.Lock()
+
+
+def get_video_hash(filepath):
+    """Generate a hash of the video file for caching"""
+    hash_md5 = hashlib.md5()
+    with open(filepath, "rb") as f:
+        # Read first 1MB and file size for quick hashing
+        chunk = f.read(1024 * 1024)
+        hash_md5.update(chunk)
+        f.seek(0, os.SEEK_END)
+        hash_md5.update(str(f.tell()).encode())
+    return hash_md5.hexdigest()
+
+
+def get_cache_path(video_hash):
+    """Get the cache file path for a video hash"""
+    return os.path.join(app.config['CACHE_FOLDER'], f"{video_hash}.json")
+
+
+def load_cached_analysis(video_hash):
+    """Load cached analysis if it exists"""
+    cache_path = get_cache_path(video_hash)
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r') as f:
+                cached_data = json.load(f)
+                print(f"✅ Loaded cached analysis for video")
+                return cached_data
+        except Exception as e:
+            print(f"⚠️ Error loading cache: {e}")
+    return None
+
+
+def save_analysis_cache(video_hash, events_data):
+    """Save analysis results to cache"""
+    cache_path = get_cache_path(video_hash)
+    try:
+        # Thread-safe file writing
+        with cache_lock:
+            with open(cache_path, 'w') as f:
+                json.dump(events_data, f, indent=2)
+        print(f"💾 Saved analysis to cache")
+    except Exception as e:
+        print(f"⚠️ Error saving cache: {e}")
+
+
+def update_cache_with_statistics(video_hash, statistics):
+    """Update existing cache file with statistics (thread-safe)"""
+    cache_path = get_cache_path(video_hash)
+    
+    try:
+        with cache_lock:
+            # Load existing cache
+            if os.path.exists(cache_path):
+                with open(cache_path, 'r') as f:
+                    cached_data = json.load(f)
+            else:
+                cached_data = {}
+            
+            # Update with statistics
+            cached_data['statistics'] = statistics
+            
+            # Save updated cache
+            with open(cache_path, 'w') as f:
+                json.dump(cached_data, f, indent=2)
+            
+            print(f"✅ Updated cache with statistics")
+    except Exception as e:
+        print(f"⚠️ Error updating cache with statistics: {e}")
+
+
+def process_statistics_background(video_path, video_hash):
+    """Process video statistics in background thread"""
+    def process():
+        try:
+            print(f"🔄 Starting background statistics processing for {video_hash[:8]}...")
+            processor = VideoStatisticsProcessor(video_path)
+            # Process every 2nd frame for performance (can be adjusted)
+            statistics = processor.process_video(sample_rate=2)
+            
+            # Update cache with statistics
+            update_cache_with_statistics(video_hash, statistics)
+            print(f"✅ Background statistics processing complete for {video_hash[:8]}")
+        except Exception as e:
+            print(f"⚠️ Background statistics processing failed: {e}")
+            # Don't raise - this is background processing, shouldn't break the app
+    
+    # Start background thread
+    thread = threading.Thread(target=process, daemon=True)
+    thread.start()
+    return thread
+
+
+# --- SETUP API KEY ---
+# Load from environment variable (supports .env file or system env)
+GEMINI_API_KEY = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    print("⚠️ WARNING: API_KEY not found in environment variables.")
+    print("💡 Create a .env file in this directory with: API_KEY=your_api_key_here")
+    print("   Or set it as an environment variable: export API_KEY=your_api_key_here")
+    print("   Get your API key from: https://makersuite.google.com/app/apikey")
+else:
+    print("✅ API key loaded successfully.")
+    # Validate API key format (basic check)
+    if not GEMINI_API_KEY.startswith("AIza"):
+        print("⚠️ WARNING: API key format looks incorrect. Should start with 'AIza'")
+
+genai.configure(api_key=GEMINI_API_KEY)
+
+
+def analyze_with_gemini(video_path, manifest):
+    print("🚀 Uploading to Gemini 1.5 Pro...")
+    
+    # 1. Upload Video
+    video_file = genai.upload_file(path=video_path)
+    
+    # 2. Wait for processing
+    while video_file.state.name == "PROCESSING":
+        print(".", end="", flush=True)
+        time.sleep(2)
+        video_file = genai.get_file(video_file.name)
+    print(" Done.")
+
+
+    if video_file.state.name == "FAILED":
+        raise ValueError("Gemini failed to process the video file.")
+    
+    # Helper function to list available models if needed
+    def list_available_models():
+        """List available models for debugging"""
+        try:
+            models = genai.list_models()
+            available = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
+            return available
+        except Exception as e:
+            return f"Error listing models: {str(e)}"
+
+
+    # 3. Construct Targeted Prompt
+    # This is the "Gold Standard" efficiency hack. We only ask about the timestamps we found.
+    prompt = "You are a professional soccer analyst providing tactical insights for a premium sports broadcast. "
+    prompt += "I have uploaded a sports video. Computer vision has flagged specific timestamps of interest. "
+    prompt += "For EACH timestamp below, analyze the footage from -2 seconds to +4 seconds around it. "
+    prompt += "Focus heavily on TACTICAL SHAPES, FORMATIONS, and STRATEGIES. Analyze:\n"
+    prompt += "- Team formations (4-3-3, 4-4-2, 3-5-2, etc.) and how they're deployed\n"
+    prompt += "- Defensive shapes (low block, mid-block, high press, zonal vs man-marking)\n"
+    prompt += "- Offensive patterns (build-up play, width usage, overloads, underlaps/overlaps)\n"
+    prompt += "- Player positioning and spacing between lines\n"
+    prompt += "- Tactical transitions (defensive to offensive shape changes)\n"
+    prompt += "- Pressing triggers and defensive coordination\n"
+    prompt += "Provide ANALYTICAL INSIGHTS about WHY these tactical elements matter in this moment.\n\n"
+    
+    prompt += "TIMESTAMPS TO ANALYZE:\n"
+    for event in manifest:
+        prompt += f"- {event['seconds']}s (Vision detected: {event['type']})\n"
+
+
+    prompt += """
+    \nRETURN VALID JSON ONLY. No comments, no markdown code blocks. Schema:
+
+    [
+      {
+        "time": "MM:SS",
+        "title": "Short Event Title (max 4 words, tactical focus)",
+        "desc": "EXACTLY 2 SENTENCES. First sentence: specific tactical observation (formation, shape, pattern). Second sentence: why it matters strategically. Be punchy and direct.",
+        "type": "GOAL",
+        "stats": {
+          "possession": 55,
+          "possession_team": "Home",
+          "passes": 15,
+          "passes_team": "Away",
+          "speed": "8.4 m/s",
+          "speed_player": "Home #10",
+          "pressure": "High",
+          "pressure_team": "Away"
+        }
+      }
+    ]
+
+    IMPORTANT: 
+    - Return ONLY valid JSON array, no markdown, no code blocks, no explanations
+    - "time" format: "MM:SS" (e.g., "01:23")
+    - "desc" MUST be EXACTLY 2 sentences (punchy, direct, tactical):
+      * Sentence 1: Specific tactical observation (formation shape, defensive/offensive pattern, player positioning)
+      * Sentence 2: Strategic implication - why this moment matters tactically
+      * Keep it concise and impactful - no fluff
+    - "type" must be one of: "GOAL", "FOUL", "SUBSTITUTION", "NORMAL"
+    - "stats" object should include 2-4 of these fields:
+      * "possession": number (0-100, percentage) - REQUIRES "possession_team": string (team name or "Home"/"Away")
+      * "passes": number (count) - REQUIRES "passes_team": string (team name or "Home"/"Away")
+      * "speed": string (e.g., "8.4 m/s" or "30 mph") - REQUIRES "speed_player": string (player description like "Home #10" or "Away Forward")
+      * "distance": string (e.g., "15m") - REQUIRES "distance_player": string (player description)
+      * "pressure": string ("High", "Medium", or "Low") - REQUIRES "pressure_team": string (team applying pressure)
+    - All stats MUST specify which team or player they refer to using the corresponding "_team" or "_player" field
+    - Team names can be: "Home", "Away", or actual team names if visible (e.g., "Barcelona", "Real Madrid")
+    - Player descriptions should include team and position/number if visible (e.g., "Home #10", "Away Forward", "Home Defender")
+    - All stats values must be valid JSON (numbers as numbers, strings as strings)
+    - Include realistic stats based on what's visible in the video
+
+    """
+
+
+    print("🧠 Thinking...")
+    # Start with free-tier model (gemini-1.5-flash) to avoid quota issues
+    # Fallback to other models if needed
+    models_to_try = [
+        'gemini-1.5-flash',      # Free tier, fast, supports video
+        'gemini-1.5-pro',        # Free tier, better quality
+        'gemini-pro-latest',     # Free tier alternative
+        'gemini-flash-latest',   # Latest flash model
+        'gemini-2.5-flash',      # Newer model (may have quota limits)
+        'gemini-2.5-pro'         # Best quality (may have quota limits)
+    ]
+    
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            print(f"🔄 Trying model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content([video_file, prompt], request_options={"timeout": 600})
+            print(f"✅ Successfully using model: {model_name}")
+            break
+        except Exception as model_error:
+            error_msg = str(model_error)
+            last_error = model_error
+            
+            # Check for quota errors
+            if "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+                print(f"⚠️ Quota exceeded for {model_name}, trying next model...")
+                continue
+            
+            # Check for model not found errors
+            if "not found" in error_msg.lower() or "404" in error_msg:
+                print(f"⚠️ Model {model_name} not found, trying next model...")
+                continue
+            
+            # For other errors, try next model
+            print(f"⚠️ Error with {model_name}: {error_msg[:100]}... trying next model...")
+            continue
+    else:
+        # All models failed
+        if last_error:
+            error_msg = str(last_error)
+            if "429" in error_msg or "quota" in error_msg.lower():
+                available = list_available_models()
+                raise ValueError(
+                    f"Quota exceeded for all models. Original error: {error_msg}\n"
+                    f"Available models: {available}\n"
+                    f"Please check your API quota at: https://ai.dev/usage?tab=rate-limit"
+                )
+            else:
+                available = list_available_models()
+                raise ValueError(f"All models failed. Last error: {error_msg}\nAvailable models: {available}")
+        else:
+            raise ValueError("Failed to initialize any model")
+    
+    # Clean response - handle various formats Gemini might return
+    text = response.text.strip()
+    
+    # Remove markdown code blocks if present
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    
+    # Try to extract JSON array if there's extra text
+    json_match = re.search(r'\[.*\]', text, re.DOTALL)
+    if json_match:
+        text = json_match.group(0)
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parsing error: {e}")
+        print(f"📄 Response text (first 500 chars): {text[:500]}")
+        # Try to fix common issues
+        # Remove trailing commas before } or ]
+        text = re.sub(r',\s*}', '}', text)
+        text = re.sub(r',\s*]', ']', text)
+        # Remove comments (though shouldn't be there)
+        text = re.sub(r'//.*', '', text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            raise ValueError(f"Failed to parse JSON response. Error: {e}\nResponse preview: {text[:200]}")
+
+
+@app.route('/', methods=['GET'])
+def index():
+    return send_from_directory('.', 'index.html')
+
+@app.route('/test', methods=['GET'])
+def test():
+    return send_from_directory('.', 'test.html')
+
+@app.route('/api', methods=['GET'])
+def api_info():
+    return jsonify({
+        "service": "Sentinel Backend - Soccer Video Analysis",
+        "version": "1.0",
+        "endpoints": {
+            "/analyze": {
+                "method": "POST",
+                "description": "Upload a video file for analysis",
+                "content_type": "multipart/form-data",
+                "field_name": "video",
+                "returns": "JSON array of detected events"
+            }
+        },
+        "status": "running"
+    })
+
+
+@app.route('/analyze', methods=['GET', 'POST'])
+def analyze_video():
+    if request.method == 'GET':
+        return jsonify({
+            "error": "Method not allowed",
+            "message": "This endpoint only accepts POST requests",
+            "usage": {
+                "method": "POST",
+                "url": "/analyze",
+                "content_type": "multipart/form-data",
+                "field": "video",
+                "example_curl": "curl -X POST -F 'video=@your_video.mp4' http://localhost:5001/analyze"
+            }
+        }), 405
+    if 'video' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    
+    file = request.files['video']
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+
+    try:
+        # Check cache first
+        video_hash = get_video_hash(filepath)
+        cached_data = load_cached_analysis(video_hash)
+        
+        if cached_data:
+            # Check if statistics exist
+            has_statistics = cached_data.get('statistics') is not None and \
+                           cached_data.get('statistics', {}).get('metadata', {}).get('processed', False)
+            
+            # Return cached analysis (with or without statistics)
+            response_data = {
+                "success": True,
+                "events": cached_data.get('events', []),
+                "count": len(cached_data.get('events', [])),
+                "video": filename,
+                "cached": True
+            }
+            
+            # Include statistics if available
+            if has_statistics:
+                response_data["statistics"] = cached_data.get('statistics')
+                response_data["has_statistics"] = True
+            else:
+                response_data["has_statistics"] = False
+                # Trigger background processing if statistics don't exist
+                process_statistics_background(filepath, video_hash)
+            
+            return jsonify(response_data)
+        
+        # Pass A: Local Vision
+        detector = SoccerEventDetector(filepath)
+        detector.detect_audio_events()
+        detector.detect_visual_events()
+        manifest = detector.generate_manifest()
+        
+        # Fallback if vision finds nothing (force generic analysis)
+        if not manifest:
+            manifest = [{"seconds": 10, "type": "sample_check"}, {"seconds": 30, "type": "sample_check"}]
+
+
+        # Pass B: Gemini
+        final_events = analyze_with_gemini(filepath, manifest)
+        
+        # Log stats info for debugging
+        stats_count = sum(1 for event in final_events if event.get('stats'))
+        print(f"📊 Events with stats: {stats_count}/{len(final_events)}")
+        if stats_count > 0:
+            sample_stats = next((e.get('stats') for e in final_events if e.get('stats')), {})
+            print(f"📊 Sample stats keys: {list(sample_stats.keys())}")
+        
+        # Cache the analysis (without statistics initially)
+        save_analysis_cache(video_hash, {"events": final_events, "video": filename})
+        
+        # Trigger background statistics processing
+        process_statistics_background(filepath, video_hash)
+        
+        # Return JSON response for frontend
+        # Response format: Array of event objects
+        # Each event has: { "time": "MM:SS", "title": "...", "desc": "...", "type": "GOAL|FOUL|SUBSTITUTION|NORMAL" }
+        return jsonify({
+            "success": True,
+            "events": final_events,
+            "count": len(final_events),
+            "video": filename,
+            "cached": False,
+            "has_statistics": False,
+            "statistics_processing": "started"
+        })
+
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error: {error_msg}")
+        
+        # Check for API key errors
+        if "API key" in error_msg.lower() or "API_KEY" in error_msg or "expired" in error_msg.lower():
+            return jsonify({
+                "error": "API Key Error",
+                "message": "Your Gemini API key is invalid or expired.",
+                "solution": "Please get a new API key from https://makersuite.google.com/app/apikey",
+                "instructions": [
+                    "1. Visit https://makersuite.google.com/app/apikey",
+                    "2. Sign in with your Google account",
+                    "3. Create a new API key or regenerate an existing one",
+                    "4. Update your .env file with: API_KEY=your_new_key_here",
+                    "5. Restart the server"
+                ],
+                "original_error": error_msg
+            }), 401
+        
+        # Check for quota errors
+        if "429" in error_msg or "quota" in error_msg.lower() or "exceeded" in error_msg.lower():
+            return jsonify({
+                "error": "Quota Exceeded",
+                "message": "You have exceeded your API quota for the requested model.",
+                "solution": "The system will automatically try free-tier models. If this persists:",
+                "instructions": [
+                    "1. Check your usage at: https://ai.dev/usage?tab=rate-limit",
+                    "2. Review rate limits: https://ai.google.dev/gemini-api/docs/rate-limits",
+                    "3. Consider upgrading your plan or waiting for quota reset",
+                    "4. The system will automatically try gemini-1.5-flash (free tier) first"
+                ],
+                "original_error": error_msg
+            }), 429
+        
+        return jsonify({"error": error_msg}), 500
+
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5001)
+

@@ -1,0 +1,10 @@
+flask
+flask-cors
+google-generativeai>=0.3.0
+opencv-python
+librosa
+scipy
+python-dotenv
+numpy
+werkzeug
+
