@@ -23,10 +23,13 @@ CORS(app) # CRITICAL: Allows your browser frontend to talk to this python script
 # CONFIG
 UPLOAD_FOLDER = 'uploads'
 CACHE_FOLDER = 'cache'
+EDITS_FOLDER = 'cache/edits'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(CACHE_FOLDER, exist_ok=True)
+os.makedirs(EDITS_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['CACHE_FOLDER'] = CACHE_FOLDER
+app.config['EDITS_FOLDER'] = EDITS_FOLDER
 
 # Thread lock for cache file operations
 cache_lock = threading.Lock()
@@ -330,6 +333,21 @@ def index():
 def test():
     return send_from_directory('.', 'test.html')
 
+@app.route('/api/video/<filename>', methods=['GET'])
+def get_video_file(filename):
+    """Serve video file from uploads folder"""
+    try:
+        # Security: ensure filename is safe
+        safe_filename = secure_filename(filename)
+        video_path = os.path.join(app.config['UPLOAD_FOLDER'], safe_filename)
+        
+        if os.path.exists(video_path) and os.path.isfile(video_path):
+            return send_from_directory(app.config['UPLOAD_FOLDER'], safe_filename)
+        else:
+            return jsonify({"error": "Video file not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api', methods=['GET'])
 def api_info():
     return jsonify({
@@ -346,6 +364,359 @@ def api_info():
         },
         "status": "running"
     })
+
+
+@app.route('/api/videos', methods=['GET'])
+def list_videos():
+    """List all cached video analyses"""
+    try:
+        cache_folder = app.config['CACHE_FOLDER']
+        videos = []
+        
+        if os.path.exists(cache_folder):
+            for filename in os.listdir(cache_folder):
+                if filename.endswith('.json'):
+                    cache_path = os.path.join(cache_folder, filename)
+                    try:
+                        with open(cache_path, 'r') as f:
+                            cached_data = json.load(f)
+                            
+                        video_hash = filename.replace('.json', '')
+                        video_filename = cached_data.get('video', 'Unknown')
+                        video_info = {
+                            "hash": video_hash,
+                            "filename": video_filename,
+                            "event_count": len(cached_data.get('events', [])),
+                            "has_statistics": cached_data.get('statistics', {}).get('metadata', {}).get('processed', False),
+                            "events": cached_data.get('events', []),
+                            "video_url": f"/api/video/{video_filename}" if video_filename != 'Unknown' else None
+                        }
+                        
+                        # Check if video file actually exists
+                        if video_filename != 'Unknown':
+                            video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+                            video_info["video_exists"] = os.path.exists(video_path)
+                        else:
+                            video_info["video_exists"] = False
+                        
+                        # Get file modification time
+                        mtime = os.path.getmtime(cache_path)
+                        video_info["analyzed_at"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime))
+                        
+                        videos.append(video_info)
+                    except Exception as e:
+                        print(f"⚠️ Error reading cache file {filename}: {e}")
+                        continue
+        
+        # Sort by most recently analyzed first
+        videos.sort(key=lambda x: x.get('analyzed_at', ''), reverse=True)
+        
+        return jsonify({
+            "success": True,
+            "videos": videos,
+            "count": len(videos)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+def generate_supercut_with_gemini(video_path, query, events):
+    """Use Gemini AI to analyze query and select relevant events for supercut"""
+    print(f"🎬 Generating supercut for query: '{query}'")
+    
+    # Convert events to a format Gemini can understand
+    events_summary = []
+    for event in events:
+        events_summary.append({
+            "time": event.get('time', '00:00'),
+            "title": event.get('title', ''),
+            "desc": event.get('desc', ''),
+            "type": event.get('type', 'NORMAL')
+        })
+    
+    prompt = f"""You are an NFL video editor creating a supercut based on a user's question.
+
+USER QUESTION: "{query}"
+
+AVAILABLE EVENTS IN THIS VIDEO:
+{json.dumps(events_summary, indent=2)}
+
+Your task:
+1. Analyze the user's question and select the most relevant events
+2. Create a compelling title for this supercut (max 8 words)
+3. Write a brief intro explaining why these clips were selected (2-3 sentences)
+4. Return ONLY valid JSON with this structure:
+
+{{
+  "title": "Compelling Supercut Title",
+  "intro": "Brief explanation of why these clips were selected and what they show.",
+  "selected_events": [
+    {{
+      "time": "MM:SS",
+      "reason": "Why this clip is relevant to the question"
+    }}
+  ]
+}}
+
+IMPORTANT:
+- Select 3-8 events that best answer the user's question
+- Events are already analyzed and tagged - use their existing titles/descriptions
+- The "time" field must match exactly one of the events above (MM:SS format)
+- Be selective - quality over quantity
+- The intro should explain the selection criteria
+
+Return ONLY valid JSON, no markdown, no code blocks."""
+    
+    try:
+        # Use Gemini to analyze and select events
+        models_to_try = [
+            'gemini-2.5-pro',
+            'gemini-2.5-flash',
+            'gemini-1.5-pro',
+            'gemini-1.5-flash'
+        ]
+        
+        last_error = None
+        for model_name in models_to_try:
+            try:
+                print(f"🔄 Trying model: {model_name}")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt, request_options={"timeout": 60})
+                print(f"✅ Successfully using model: {model_name}")
+                break
+            except Exception as model_error:
+                last_error = model_error
+                error_msg = str(model_error)
+                if "429" in error_msg or "quota" in error_msg.lower():
+                    print(f"⚠️ Quota exceeded for {model_name}, trying next...")
+                    continue
+                print(f"⚠️ Error with {model_name}: {error_msg[:100]}... trying next...")
+                continue
+        else:
+            if last_error:
+                raise ValueError(f"All models failed. Last error: {str(last_error)}")
+            else:
+                raise ValueError("Failed to initialize any model")
+        
+        # Parse response
+        text = response.text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+        
+        result = json.loads(text)
+        
+        # Match selected events with actual events and create clips
+        clips = []
+        events_by_time = {event.get('time'): event for event in events}
+        
+        for selected in result.get('selected_events', []):
+            event_time = selected.get('time')
+            if event_time in events_by_time:
+                event = events_by_time[event_time]
+                # Convert MM:SS to seconds
+                time_parts = event_time.split(':')
+                start_seconds = int(time_parts[0]) * 60 + int(time_parts[1])
+                # Clip range: -2 seconds before, +4 seconds after
+                clips.append({
+                    "start": max(0, start_seconds - 2),
+                    "end": start_seconds + 4,
+                    "event": event,
+                    "reason": selected.get('reason', '')
+                })
+        
+        return {
+            "title": result.get('title', 'Supercut'),
+            "intro": result.get('intro', 'Selected clips from the video.'),
+            "clips": clips,
+            "query": query
+        }
+        
+    except Exception as e:
+        print(f"❌ Error generating supercut: {e}")
+        raise
+
+
+@app.route('/api/supercut', methods=['POST'])
+def create_supercut():
+    """Generate a supercut based on user query"""
+    if 'query' not in request.form:
+        return jsonify({"error": "No query provided"}), 400
+    
+    query = request.form['query'].strip()
+    
+    if not query:
+        return jsonify({"error": "Query cannot be empty"}), 400
+    
+    # Get video file - either from upload, filename, or video_hash
+    filename = None
+    filepath = None
+    video_hash = None
+    
+    # Check if video_hash is provided directly (from cached video list)
+    if 'video_hash' in request.form:
+        video_hash = request.form['video_hash']
+        # Validate hash format
+        if not re.match(r'^[a-f0-9]+$', video_hash):
+            return jsonify({"error": "Invalid video hash format"}), 400
+        # Try to load cache directly
+        cached_data = load_cached_analysis(video_hash)
+        if cached_data:
+            filename = cached_data.get('video', 'Unknown')
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename) if filename != 'Unknown' else None
+    elif 'video' in request.files and request.files['video'].filename:
+        # New upload
+        file = request.files['video']
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+    elif 'video_filename' in request.form:
+        # Use existing video file
+        filename = secure_filename(request.form['video_filename'])
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "Video file not found"}), 404
+    else:
+        return jsonify({"error": "No video file, filename, or video_hash provided"}), 400
+    
+    try:
+        # Get video hash if not already provided
+        if not video_hash:
+            if filepath and os.path.exists(filepath):
+                video_hash = get_video_hash(filepath)
+            else:
+                return jsonify({
+                    "error": "Could not determine video hash. Please ensure the video file exists."
+                }), 400
+        
+        # Load cached analysis
+        if not cached_data:
+            cached_data = load_cached_analysis(video_hash)
+        
+        if not cached_data or not cached_data.get('events'):
+            # Debug: list available cache files
+            cache_folder = app.config['CACHE_FOLDER']
+            available_caches = []
+            if os.path.exists(cache_folder):
+                available_caches = [f for f in os.listdir(cache_folder) if f.endswith('.json')]
+            
+            return jsonify({
+                "error": "Video must be analyzed first. Please analyze the video before creating a supercut.",
+                "debug": {
+                    "video_hash": video_hash,
+                    "filename": filename,
+                    "filepath_exists": filepath and os.path.exists(filepath) if filepath else False,
+                    "cache_files_count": len(available_caches)
+                }
+            }), 400
+        
+        events = cached_data.get('events', [])
+        
+        # Generate supercut using Gemini
+        supercut_data = generate_supercut_with_gemini(filepath, query, events)
+        
+        # Add metadata
+        supercut_data['created_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        supercut_data['video_hash'] = video_hash
+        supercut_data['video_filename'] = filename
+        
+        # Generate unique ID for sharing
+        query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
+        supercut_id = f"{video_hash}_{query_hash}"
+        supercut_data['id'] = supercut_id
+        
+        # Save supercut metadata
+        supercut_filename = f"{supercut_id}.json"
+        supercut_path = os.path.join(app.config['EDITS_FOLDER'], supercut_filename)
+        
+        with cache_lock:
+            with open(supercut_path, 'w') as f:
+                json.dump(supercut_data, f, indent=2)
+        
+        print(f"💾 Saved supercut: {supercut_filename} (ID: {supercut_id})")
+        
+        return jsonify({
+            "success": True,
+            "supercut": supercut_data
+        })
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error creating supercut: {error_msg}")
+        return jsonify({
+            "error": error_msg
+        }), 500
+
+
+@app.route('/api/cache/<video_hash>', methods=['GET'])
+def get_cache(video_hash):
+    """Get cached analysis by video hash"""
+    try:
+        # Security: ensure video_hash is safe
+        if not re.match(r'^[a-f0-9]+$', video_hash):
+            return jsonify({"error": "Invalid video hash"}), 400
+        
+        cached_data = load_cached_analysis(video_hash)
+        
+        if not cached_data:
+            return jsonify({"error": "Cache not found"}), 404
+        
+        return jsonify({
+            "success": True,
+            "events": cached_data.get('events', []),
+            "video": cached_data.get('video', 'Unknown')
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/supercut/<supercut_id>', methods=['GET'])
+def get_supercut(supercut_id):
+    """Get a supercut by ID (for sharing)"""
+    try:
+        # Security: ensure supercut_id is safe (alphanumeric and underscores only)
+        if not re.match(r'^[a-f0-9_]+$', supercut_id):
+            return jsonify({"error": "Invalid supercut ID"}), 400
+        
+        supercut_filename = f"{supercut_id}.json"
+        supercut_path = os.path.join(app.config['EDITS_FOLDER'], supercut_filename)
+        
+        if not os.path.exists(supercut_path):
+            return jsonify({"error": "Supercut not found"}), 404
+        
+        with open(supercut_path, 'r') as f:
+            supercut_data = json.load(f)
+        
+        # Also include video URL if video exists
+        video_filename = supercut_data.get('video_filename')
+        if video_filename:
+            video_path = os.path.join(app.config['UPLOAD_FOLDER'], video_filename)
+            if os.path.exists(video_path):
+                supercut_data['video_url'] = f"/api/video/{video_filename}"
+                supercut_data['video_exists'] = True
+            else:
+                supercut_data['video_exists'] = False
+        
+        return jsonify({
+            "success": True,
+            "supercut": supercut_data
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
 
 
 @app.route('/analyze', methods=['GET', 'POST'])
@@ -386,6 +757,7 @@ def analyze_video():
                 "events": cached_data.get('events', []),
                 "count": len(cached_data.get('events', [])),
                 "video": filename,
+                "video_hash": video_hash,
                 "cached": True
             }
             
@@ -435,6 +807,7 @@ def analyze_video():
             "events": final_events,
             "count": len(final_events),
             "video": filename,
+            "video_hash": video_hash,
             "cached": False,
             "has_statistics": False,
             "statistics_processing": "started"

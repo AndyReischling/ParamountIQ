@@ -168,25 +168,78 @@
         <div class="flex h-[calc(100vh-73px)]">
             <!-- Left: Video Player (75%) -->
             <div class="w-3/4 video-container relative">
-                <div v-if="!videoUrl && !isAnalyzing" class="h-full flex items-center justify-center">
+                <div v-if="!videoUrl && !isAnalyzing" class="h-full flex flex-col">
+                    <!-- Video List -->
+                    <div v-if="cachedVideos.length > 0" class="flex-1 overflow-y-auto p-6">
+                        <div class="mb-4 flex items-center justify-between">
+                            <h2 class="text-lg font-semibold uppercase tracking-wide">Previously Analyzed Videos</h2>
+                            <button 
+                                @click="showUploadArea = true"
+                                class="px-4 py-2 bg-[#0064FF] text-white rounded-lg hover:bg-[#0052CC] transition-colors text-sm font-semibold uppercase"
+                            >
+                                + Upload New
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 gap-4">
+                            <div 
+                                v-for="video in cachedVideos" 
+                                :key="video.hash"
+                                @click="loadCachedVideo(video)"
+                                class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-4 cursor-pointer hover:border-[#0064FF] transition-all hover:shadow-lg"
+                            >
+                                <div class="flex items-start justify-between mb-2">
+                                    <div class="flex-1">
+                                        <h3 class="font-semibold text-white mb-1">{{ video.filename }}</h3>
+                                        <p class="text-xs text-slate-400">Analyzed: {{ video.analyzed_at }}</p>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="px-2 py-1 bg-[#0064FF]/20 text-[#0064FF] text-xs font-semibold rounded">
+                                            {{ video.event_count }} Events
+                                        </span>
+                                        <span v-if="video.has_statistics" class="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-semibold rounded">
+                                            Stats
+                                        </span>
+                                    </div>
+                                </div>
+                                <div v-if="video.events && video.events.length > 0" class="mt-2 flex flex-wrap gap-1">
+                                    <span 
+                                        v-for="(event, idx) in video.events.slice(0, 3)" 
+                                        :key="idx"
+                                        :class="['px-2 py-0.5 text-xs rounded', getEventBadgeClass(event.type)]"
+                                    >
+                                        {{ event.time }} - {{ event.type }}
+                                    </span>
+                                    <span v-if="video.events.length > 3" class="px-2 py-0.5 text-xs text-slate-400">
+                                        +{{ video.events.length - 3 }} more
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- Upload Area -->
                     <div 
+                        v-if="cachedVideos.length === 0 || showUploadArea"
                         @drop.prevent="handleDrop"
                         @dragover.prevent
                         @dragenter.prevent
-                        class="border-2 border-dashed border-[#1e293b] rounded-lg p-12 text-center cursor-pointer hover:border-[#0064FF] transition-colors"
-                        @click="triggerFileInput"
+                        class="flex-1 flex items-center justify-center"
                     >
-                        <input 
-                            ref="fileInput"
-                            type="file" 
-                            accept="video/*" 
-                            @change="handleFileSelect"
-                            class="hidden"
+                        <div 
+                            class="border-2 border-dashed border-[#1e293b] rounded-lg p-12 text-center cursor-pointer hover:border-[#0064FF] transition-colors"
+                            @click="triggerFileInput"
                         >
-                        <div class="text-6xl mb-4">📹</div>
-                        <h3 class="text-xl font-semibold mb-2 uppercase tracking-wide">Upload Match Video</h3>
-                        <p class="text-sm text-slate-400">Drag and drop or click to select</p>
+                            <input 
+                                ref="fileInput"
+                                type="file" 
+                                accept="video/*" 
+                                @change="handleFileSelect"
+                                class="hidden"
+                            >
+                            <div class="text-6xl mb-4">📹</div>
+                            <h3 class="text-xl font-semibold mb-2 uppercase tracking-wide">Upload Match Video</h3>
+                            <p class="text-sm text-slate-400">Drag and drop or click to select</p>
+                        </div>
                     </div>
                 </div>
                 
@@ -206,7 +259,58 @@
                         class="w-full h-full object-contain"
                         @timeupdate="onVideoTimeUpdate"
                         @loadedmetadata="onVideoLoaded"
+                        @ended="onVideoEnded"
                     ></video>
+                    
+                    <!-- Supercut/Edit Button Overlay -->
+                    <button
+                        @click="showQueryModal = true"
+                        class="absolute top-4 right-4 bg-[#0064FF] hover:bg-[#0052CC] text-white p-3 rounded-full shadow-lg transition-all hover:scale-110 z-20"
+                        title="Create a supercut"
+                    >
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path>
+                        </svg>
+                    </button>
+                    
+                    <!-- Title/Intro Overlay for Supercut -->
+                    <div 
+                        v-if="currentSupercut && showSupercutIntro"
+                        class="absolute inset-0 bg-black/90 flex items-center justify-center z-30"
+                        @click="showSupercutIntro = false"
+                    >
+                        <div class="max-w-2xl mx-4 text-center">
+                            <div class="mb-6">
+                                <svg class="w-12 h-12 text-[#0064FF] mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path>
+                                </svg>
+                                <h2 class="text-3xl font-bold text-white mb-4">{{ currentSupercut.title }}</h2>
+                                <p class="text-lg text-slate-300 mb-2">{{ currentSupercut.intro }}</p>
+                                <p class="text-sm text-slate-400">{{ currentSupercut.clips.length }} clips selected</p>
+                            </div>
+                            <div class="flex gap-3 justify-center">
+                                <button 
+                                    @click.stop="startSupercut()"
+                                    class="px-6 py-3 bg-[#0064FF] hover:bg-[#0052CC] text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
+                                >
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"></path>
+                                    </svg>
+                                    Play Supercut
+                                </button>
+                                <button 
+                                    @click.stop="shareSupercut()"
+                                    class="px-6 py-3 border border-[#1e293b] hover:border-[#0064FF] text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
+                                >
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path>
+                                    </svg>
+                                    Share
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-500 mt-4">Click outside to close</p>
+                        </div>
+                    </div>
                     
                     <!-- Visual Overlays: Movement Lines & Statistics -->
                     <transition-group
@@ -318,14 +422,43 @@
             <!-- Right: Intelligence Feed (25%) -->
             <div class="w-1/4 border-l border-[#1e293b] flex flex-col">
                 <div class="px-4 py-3 border-b border-[#1e293b]">
-                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">Intelligence Feed</h2>
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">
+                            <span v-if="supercutMode && currentSupercut">{{ currentSupercut.title }}</span>
+                            <span v-else>Intelligence Feed</span>
+                        </h2>
+                        <button 
+                            v-if="supercutMode"
+                            @click="exitSupercutMode()"
+                            class="text-xs text-slate-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-[#1e293b]"
+                            title="Exit supercut mode"
+                        >
+                            Exit
+                        </button>
+                    </div>
+                    <!-- Supercut Progress Bar -->
+                    <div v-if="supercutMode && supercutDuration > 0" class="mt-2">
+                        <div class="flex items-center justify-between text-xs text-slate-500 mb-1">
+                            <span>{{ formatTime(supercutCurrentTime) }}</span>
+                            <span>{{ formatTime(supercutDuration) }}</span>
+                        </div>
+                        <div class="w-full bg-[#1e293b] rounded-full h-1.5">
+                            <div 
+                                class="bg-[#0064FF] h-1.5 rounded-full transition-all duration-300"
+                                :style="{ width: `${Math.min(100, (supercutCurrentTime / supercutDuration) * 100)}%` }"
+                            ></div>
+                        </div>
+                    </div>
                 </div>
                 
                 <div 
                     ref="feedContainer"
                     class="flex-1 overflow-y-auto feed-scroll p-4 space-y-3"
                 >
-                    <div v-if="events.length === 0 && !isAnalyzing" class="text-center text-slate-500 py-8">
+                    <div v-if="supercutMode && supercutEvents.length === 0" class="text-center text-slate-500 py-8">
+                        <p class="text-sm">No clips in supercut.</p>
+                    </div>
+                    <div v-else-if="events.length === 0 && !isAnalyzing" class="text-center text-slate-500 py-8">
                         <p class="text-sm">No events detected yet.</p>
                         <p class="text-xs mt-2">Upload a video to begin analysis.</p>
                     </div>
@@ -340,13 +473,23 @@
                             :key="index"
                             :ref="el => { if (el) eventRefs[index] = el }"
                             :class="['event-card p-3 rounded-lg border bg-[#0f172a] mb-3', 
-                                     isEventActive(event) ? 'active border-[#0064FF]' : 'border-[#1e293b]']"
+                                     isEventActive(event) ? 'active border-[#0064FF]' : 'border-[#1e293b]',
+                                     supercutMode ? 'cursor-pointer hover:border-[#0064FF]/50 transition-colors' : '']"
+                            @click="supercutMode ? jumpToClip(event) : null"
                         >
                             <div class="flex items-start justify-between mb-1.5">
-                                <span class="text-xs font-mono text-[#0064FF]">{{ event.time }}</span>
-                                <span :class="['badge-' + event.type, 'px-2 py-0.5 text-xs font-semibold uppercase rounded']">
-                                    {{ event.type }}
-                                </span>
+                                <div class="flex flex-col">
+                                    <span class="text-xs font-mono text-[#0064FF]">{{ event.time }}</span>
+                                    <span v-if="supercutMode && event.clipEnd" class="text-[10px] font-mono text-slate-500">
+                                        {{ formatTime(event.clipStart) }} - {{ formatTime(event.clipEnd) }}
+                                    </span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span v-if="supercutMode" class="text-[9px] text-slate-500">Click to jump</span>
+                                    <span :class="['badge-' + event.type, 'px-2 py-0.5 text-xs font-semibold uppercase rounded']">
+                                        {{ event.type }}
+                                    </span>
+                                </div>
                             </div>
                             <h3 class="font-semibold text-sm mb-1.5">{{ event.title }}</h3>
                             <p class="text-xs text-slate-400 leading-relaxed mb-2">{{ event.desc }}</p>
@@ -390,6 +533,63 @@
                 </div>
             </div>
         </div>
+        
+        <!-- Supercut Creation Modal -->
+        <div 
+            v-if="showQueryModal"
+            class="fixed inset-0 bg-black/80 flex items-center justify-center z-50"
+            @click.self="showQueryModal = false"
+        >
+            <div class="bg-[#0f172a] border border-[#1e293b] rounded-lg p-6 max-w-2xl w-full mx-4">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-6 h-6 text-[#0064FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path>
+                        </svg>
+                        <h3 class="text-xl font-semibold uppercase tracking-wide">Create Supercut</h3>
+                    </div>
+                    <button 
+                        @click="showQueryModal = false"
+                        class="text-slate-400 hover:text-white transition-colors"
+                    >
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <p class="text-sm text-slate-400 mb-4">Describe what you want in your supercut. AI will select the best clips and create a shareable edit.</p>
+                <textarea
+                    v-model="queryText"
+                    placeholder="e.g., 'Show me all the touchdowns' or 'Best defensive plays of the game' or 'All penalties and turnovers'"
+                    class="w-full bg-[#020617] border border-[#1e293b] rounded-lg p-4 text-white placeholder-slate-500 focus:border-[#0064FF] focus:outline-none resize-none"
+                    rows="4"
+                    @keydown.ctrl.enter="generateSupercut"
+                    @keydown.meta.enter="generateSupercut"
+                ></textarea>
+                <div class="flex items-center justify-between mt-4">
+                    <p class="text-xs text-slate-400">Press Ctrl+Enter (Cmd+Enter on Mac) to create</p>
+                    <div class="flex gap-2">
+                        <button 
+                            @click="showQueryModal = false"
+                            class="px-4 py-2 border border-[#1e293b] rounded-lg hover:border-[#0064FF] transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            @click="generateSupercut"
+                            :disabled="!queryText.trim() || isGeneratingSupercut"
+                            class="px-4 py-2 bg-[#0064FF] hover:bg-[#0052CC] rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                            <svg v-if="!isGeneratingSupercut" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.879 2.879M12 12L9.121 9.121m0 5.758a3 3 0 10-4.243 4.243 3 3 0 004.243-4.243zm0-5.758a3 3 0 10-4.243-4.243 3 3 0 004.243 4.243z"></path>
+                            </svg>
+                            <span v-if="isGeneratingSupercut">Creating...</span>
+                            <span v-else>Create Supercut</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -407,6 +607,17 @@
                 const events = ref([]);
                 const isAnalyzing = ref(false);
                 const currentTime = ref(0);
+                const cachedVideos = ref([]);
+                const showUploadArea = ref(false);
+                const showQueryModal = ref(false);
+                const queryText = ref('');
+                const isGeneratingSupercut = ref(false);
+                const currentSupercut = ref(null);
+                const showSupercutIntro = ref(false);
+                const supercutMode = ref(false);
+                const currentClipIndex = ref(0);
+                const currentVideoFilename = ref(null);
+                const currentVideoHash = ref(null);
 
                 // Convert MM:SS to seconds
                 function timeToSeconds(timeStr) {
@@ -421,16 +632,106 @@
                 // Check if event is active (within 2-second window)
                 function isEventActive(event) {
                     if (!videoPlayer.value) return false;
+                    
+                    // In supercut mode, check if we're in a clip containing this event
+                    if (supercutMode.value && currentSupercut.value && currentSupercut.value.clips) {
+                        const clip = currentSupercut.value.clips.find(c => c.event === event || 
+                            (c.event && c.event.time === event.time));
+                        if (clip) {
+                            return currentTime.value >= clip.start && currentTime.value <= clip.end;
+                        }
+                        return false;
+                    }
+                    
+                    // Normal mode: check time difference
                     const eventTime = timeToSeconds(event.time);
                     const diff = Math.abs(currentTime.value - eventTime);
                     return diff <= 2;
                 }
 
+                // Get supercut events with clip info (only clips in the supercut)
+                const supercutEvents = computed(() => {
+                    if (!supercutMode.value || !currentSupercut.value || !currentSupercut.value.clips) {
+                        return [];
+                    }
+                    // Return events with clip metadata attached
+                    return currentSupercut.value.clips.map(clip => {
+                        const event = { ...clip.event };
+                        // Add clip start/end times to event for display
+                        event.clipStart = clip.start;
+                        event.clipEnd = clip.end;
+                        event.clipDuration = clip.end - clip.start;
+                        return event;
+                    }).filter(e => e);
+                });
+                
+                // Get supercut total duration
+                const supercutDuration = computed(() => {
+                    if (!supercutMode.value || !currentSupercut.value || !currentSupercut.value.clips) {
+                        return 0;
+                    }
+                    return currentSupercut.value.clips.reduce((total, clip) => {
+                        return total + (clip.end - clip.start);
+                    }, 0);
+                });
+                
+                // Get current supercut time (progress through supercut)
+                const supercutCurrentTime = computed(() => {
+                    if (!supercutMode.value || !currentSupercut.value || !currentSupercut.value.clips || !videoPlayer.value) {
+                        return 0;
+                    }
+                    
+                    const videoTime = videoPlayer.value.currentTime;
+                    
+                    // Find which clip we're currently in based on video time
+                    let currentClipIdx = -1;
+                    for (let i = 0; i < currentSupercut.value.clips.length; i++) {
+                        const clip = currentSupercut.value.clips[i];
+                        if (videoTime >= clip.start && videoTime < clip.end) {
+                            currentClipIdx = i;
+                            break;
+                        }
+                    }
+                    
+                    // If we're between clips or past the last one, use the last clip
+                    if (currentClipIdx === -1) {
+                        if (videoTime >= currentSupercut.value.clips[currentSupercut.value.clips.length - 1].end) {
+                            currentClipIdx = currentSupercut.value.clips.length - 1;
+                        } else {
+                            // Before first clip
+                            return 0;
+                        }
+                    }
+                    
+                    // Sum duration of previous clips
+                    let totalTime = 0;
+                    for (let i = 0; i < currentClipIdx; i++) {
+                        const clip = currentSupercut.value.clips[i];
+                        totalTime += (clip.end - clip.start);
+                    }
+                    
+                    // Add progress in current clip
+                    const currentClip = currentSupercut.value.clips[currentClipIdx];
+                    const clipProgress = Math.max(0, videoTime - currentClip.start);
+                    totalTime += Math.min(clipProgress, currentClip.end - currentClip.start);
+                    
+                    return totalTime;
+                });
+
                 // Get visible event cards (appear one by one as video plays)
                 const visibleEventCards = computed(() => {
-                    if (!videoPlayer.value || events.value.length === 0) return events.value;
-                    // Show events that have already occurred (with 1 second buffer)
-                    return events.value.filter(event => {
+                    // In supercut mode, only show supercut events
+                    const eventsToShow = supercutMode.value ? supercutEvents.value : events.value;
+                    
+                    if (!videoPlayer.value || eventsToShow.length === 0) return eventsToShow;
+                    
+                    if (supercutMode.value) {
+                        // In supercut mode, show all clips (they're already filtered)
+                        return eventsToShow;
+                    }
+                    
+                    // Normal mode: Show events that have already occurred (with 1 second buffer)
+                    return eventsToShow.filter(event => {
                         const eventTime = timeToSeconds(event.time);
                         return currentTime.value >= eventTime - 1; // Show 1 second before timestamp
                     });
@@ -438,7 +739,22 @@
 
                 // Get active tactical overlays (show when event is active)
                 const activeTacticalOverlays = computed(() => {
-                    if (!videoPlayer.value || events.value.length === 0) return [];
+                    if (!videoPlayer.value) return [];
+                    
+                    // In supercut mode, show overlays for clips we're currently in
+                    if (supercutMode.value && currentSupercut.value && currentSupercut.value.clips) {
+                        return currentSupercut.value.clips
+                            .filter(clip => {
+                                // Show overlay if we're within the clip's time range
+                                return currentTime.value >= clip.start && currentTime.value <= clip.end;
+                            })
+                            .map(clip => clip.event)
+                            .filter(e => e);
+                    }
+                    
+                    // Normal mode: show overlays for events within 3 seconds
+                    if (events.value.length === 0) return [];
+                    
                     return events.value.filter(event => {
                         const eventTime = timeToSeconds(event.time);
                         const diff = Math.abs(currentTime.value - eventTime);
@@ -600,7 +916,87 @@
                 function onVideoTimeUpdate() {
                     if (videoPlayer.value) {
                         currentTime.value = videoPlayer.value.currentTime;
+                        
+                        // In supercut mode, track clip and auto-advance when playing
+                        if (supercutMode.value && currentSupercut.value && currentSupercut.value.clips) {
+                            // Update clip index based on current time
+                            let foundClip = false;
+                            for (let i = 0; i < currentSupercut.value.clips.length; i++) {
+                                const clip = currentSupercut.value.clips[i];
+                                if (currentTime.value >= clip.start && currentTime.value < clip.end) {
+                                    currentClipIndex.value = i;
+                                    foundClip = true;
+                                    break;
+                                }
+                            }
+                            
+                            // Auto-advance to next clip if we've passed the end of current clip and video is playing
+                            if (!foundClip && !videoPlayer.value.paused) {
+                                const currentClip = currentSupercut.value.clips[currentClipIndex.value];
+                                if (currentClip && currentTime.value >= currentClip.end) {
+                                    // Move to next clip
+                                    if (currentClipIndex.value < currentSupercut.value.clips.length - 1) {
+                                        currentClipIndex.value++;
+                                        const nextClip = currentSupercut.value.clips[currentClipIndex.value];
+                                        videoPlayer.value.currentTime = nextClip.start;
+                                        // Video continues playing automatically
+                                    } else {
+                                        // End of supercut - pause at end of last clip
+                                        videoPlayer.value.pause();
+                                        videoPlayer.value.currentTime = currentClip.end;
+                                    }
+                                }
+                            }
+                        }
+                        
                         scrollToActiveEvent();
+                    }
+                }
+                
+                // Handle video ended
+                function onVideoEnded() {
+                    // Don't auto-advance in supercut mode - let user control playback
+                }
+                
+                // Jump to a specific clip in supercut mode
+                function jumpToClip(event) {
+                    if (!supercutMode.value || !currentSupercut.value || !currentSupercut.value.clips || !videoPlayer.value) {
+                        return;
+                    }
+                    
+                    // If event has clipStart (from supercutEvents), use it directly
+                    if (event.clipStart !== undefined) {
+                        videoPlayer.value.currentTime = event.clipStart;
+                        videoPlayer.value.play().catch(e => {
+                            console.log('Autoplay prevented:', e);
+                        });
+                        
+                        // Find and update clip index
+                        const clipIndex = currentSupercut.value.clips.findIndex(c => 
+                            c.start === event.clipStart
+                        );
+                        if (clipIndex !== -1) {
+                            currentClipIndex.value = clipIndex;
+                        }
+                        return;
+                    }
+                    
+                    // Fallback: Find the clip containing this event by time
+                    const clip = currentSupercut.value.clips.find(c => 
+                        c.event && (c.event === event || c.event.time === event.time)
+                    );
+                    
+                    if (clip) {
+                        videoPlayer.value.currentTime = clip.start;
+                        videoPlayer.value.play().catch(e => {
+                            console.log('Autoplay prevented:', e);
+                        });
+                        
+                        // Update clip index
+                        const clipIndex = currentSupercut.value.clips.indexOf(clip);
+                        if (clipIndex !== -1) {
+                            currentClipIndex.value = clipIndex;
+                        }
                     }
                 }
 
@@ -631,6 +1027,7 @@
                     const file = event.target.files[0];
                     if (file && file.type.startsWith('video/')) {
                         videoFile.value = file;
+                        currentVideoFilename.value = file.name;
                         videoUrl.value = URL.createObjectURL(file);
                         analyzeVideo(file);
                     }
@@ -641,6 +1038,7 @@
                     const file = event.dataTransfer.files[0];
                     if (file && file.type.startsWith('video/')) {
                         videoFile.value = file;
+                        currentVideoFilename.value = file.name;
                         videoUrl.value = URL.createObjectURL(file);
                         analyzeVideo(file);
                     }
@@ -675,7 +1073,15 @@
                         const eventList = Array.isArray(data) ? data : (data.events || []);
                         events.value = eventList;
                         
+                        // Store video hash from response if available
+                        if (data.video_hash) {
+                            currentVideoHash.value = data.video_hash;
+                        }
+                        
                         console.log('Analysis complete:', eventList);
+                        
+                        // Refresh cached videos list
+                        await fetchCachedVideos();
                     } catch (error) {
                         console.error('Error analyzing video:', error);
                         alert('Error: ' + error.message);
@@ -689,9 +1095,256 @@
                     console.log('Video loaded, duration:', videoPlayer.value?.duration);
                 }
 
+                // Fetch cached videos list
+                async function fetchCachedVideos() {
+                    try {
+                        const response = await fetch('http://localhost:5001/api/videos');
+                        const data = await response.json();
+                        if (data.success) {
+                            cachedVideos.value = data.videos || [];
+                        }
+                    } catch (error) {
+                        console.error('Error fetching cached videos:', error);
+                    }
+                }
+
+                // Load cached video analysis
+                async function loadCachedVideo(video) {
+                    events.value = video.events || [];
+                    showUploadArea.value = false;
+                    currentVideoFilename.value = video.filename;
+                    currentVideoHash.value = video.hash;
+                    
+                    // Load video file if it exists
+                    if (video.video_exists && video.video_url) {
+                        videoUrl.value = `http://localhost:5001${video.video_url}`;
+                        // Wait for video to load, then play
+                        await nextTick();
+                        if (videoPlayer.value) {
+                            videoPlayer.value.load();
+                            videoPlayer.value.onloadeddata = () => {
+                                videoPlayer.value.play().catch(e => {
+                                    console.log('Autoplay prevented:', e);
+                                });
+                            };
+                        }
+                    } else {
+                        // Video file not found, show message
+                        videoUrl.value = null;
+                        alert(`Video file "${video.filename}" not found. Please upload it again to play the video.`);
+                    }
+                    
+                    // Scroll to top of feed to show events
+                    await nextTick();
+                    if (feedContainer.value) {
+                        feedContainer.value.scrollTop = 0;
+                    }
+                }
+
+                // Get event badge class
+                function getEventBadgeClass(type) {
+                    const classes = {
+                        'TOUCHDOWN': 'bg-green-500/20 text-green-400',
+                        'PENALTY': 'bg-yellow-500/20 text-yellow-400',
+                        'TIMEOUT': 'bg-blue-500/20 text-blue-400',
+                        'TURNOVER': 'bg-red-500/20 text-red-400',
+                        'NORMAL': 'bg-slate-500/20 text-slate-400'
+                    };
+                    return classes[type] || classes['NORMAL'];
+                }
+
                 // Watch for active events to trigger scroll
                 watch(() => currentTime.value, () => {
                     scrollToActiveEvent();
+                });
+
+                // Generate supercut from query
+                async function generateSupercut() {
+                    if (!queryText.value.trim() || !videoUrl.value) {
+                        alert('Please enter a question and ensure a video is loaded');
+                        return;
+                    }
+                    
+                    isGeneratingSupercut.value = true;
+                    
+                    try {
+                        const formData = new FormData();
+                        
+                        // Prefer video_hash if we have it (from cached video)
+                        if (currentVideoHash.value) {
+                            formData.append('video_hash', currentVideoHash.value);
+                            // Also send filename as backup
+                            if (currentVideoFilename.value) {
+                                formData.append('video_filename', currentVideoFilename.value);
+                            }
+                        } else if (videoFile.value) {
+                            // New upload - send file
+                            formData.append('video', videoFile.value);
+                        } else if (currentVideoFilename.value) {
+                            // Use filename
+                            formData.append('video_filename', currentVideoFilename.value);
+                        } else {
+                            // Try to extract filename from URL
+                            const urlParts = videoUrl.value.split('/');
+                            const filename = urlParts[urlParts.length - 1];
+                            if (filename && filename.includes('.')) {
+                                formData.append('video_filename', filename);
+                            } else {
+                                throw new Error('Could not determine video. Please ensure the video is analyzed.');
+                            }
+                        }
+                        
+                        formData.append('query', queryText.value.trim());
+                        
+                        const response = await fetch('http://localhost:5001/api/supercut', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (!response.ok) {
+                            throw new Error(data.error || 'Failed to generate supercut');
+                        }
+                        
+                        // Store supercut and show intro
+                        currentSupercut.value = data.supercut;
+                        showQueryModal.value = false;
+                        showSupercutIntro.value = true;
+                        queryText.value = '';
+                        
+                    } catch (error) {
+                        console.error('Error generating supercut:', error);
+                        alert('Error: ' + error.message);
+                    } finally {
+                        isGeneratingSupercut.value = false;
+                    }
+                }
+                
+                // Start playing supercut
+                function startSupercut() {
+                    if (!currentSupercut.value || !currentSupercut.value.clips || currentSupercut.value.clips.length === 0) {
+                        return;
+                    }
+                    
+                    showSupercutIntro.value = false;
+                    supercutMode.value = true;
+                    currentClipIndex.value = 0;
+                    
+                    // Jump to first clip but don't auto-play (let user control)
+                    const firstClip = currentSupercut.value.clips[0];
+                    if (videoPlayer.value && firstClip) {
+                        videoPlayer.value.currentTime = firstClip.start;
+                        // Don't auto-play - let user click play or click a clip
+                    }
+                }
+                
+                // Exit supercut mode
+                function exitSupercutMode() {
+                    supercutMode.value = false;
+                    currentSupercut.value = null;
+                    currentClipIndex.value = 0;
+                    if (videoPlayer.value) {
+                        videoPlayer.value.pause();
+                    }
+                }
+                
+                // Format time in seconds to MM:SS
+                function formatTime(seconds) {
+                    if (!seconds || seconds < 0) return '00:00';
+                    const mins = Math.floor(seconds / 60);
+                    const secs = Math.floor(seconds % 60);
+                    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                }
+                
+                // Share supercut
+                async function shareSupercut() {
+                    if (!currentSupercut.value || !currentSupercut.value.id) {
+                        alert('Supercut ID not available');
+                        return;
+                    }
+                    
+                    // Create shareable URL
+                    const shareUrl = `${window.location.origin}${window.location.pathname}?supercut=${currentSupercut.value.id}`;
+                    
+                    // Try Web Share API first (mobile-friendly)
+                    if (navigator.share) {
+                        try {
+                            await navigator.share({
+                                title: currentSupercut.value.title,
+                                text: currentSupercut.value.intro,
+                                url: shareUrl
+                            });
+                            return;
+                        } catch (err) {
+                            // User cancelled or error, fall through to clipboard
+                        }
+                    }
+                    
+                    // Fallback: copy to clipboard
+                    try {
+                        await navigator.clipboard.writeText(shareUrl);
+                        alert(`✅ Supercut link copied!\n\n"${currentSupercut.value.title}"\n\nShare this URL: ${shareUrl}`);
+                    } catch (err) {
+                        // Final fallback: show URL in prompt
+                        prompt(`Copy this link to share "${currentSupercut.value.title}":`, shareUrl);
+                    }
+                }
+                
+                // Convert MM:SS to seconds
+                function timeToSeconds(timeStr) {
+                    if (!timeStr) return 0;
+                    const parts = timeStr.split(':');
+                    if (parts.length === 2) {
+                        return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+                    }
+                    return 0;
+                }
+                
+                // Load supercut from URL parameter
+                async function loadSupercutFromUrl() {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const supercutId = urlParams.get('supercut');
+                    
+                    if (supercutId) {
+                        try {
+                            const response = await fetch(`http://localhost:5001/api/supercut/${supercutId}`);
+                            const data = await response.json();
+                            
+                            if (data.success && data.supercut) {
+                                const supercut = data.supercut;
+                                
+                                // Load the video if it exists
+                                if (supercut.video_exists && supercut.video_url) {
+                                    videoUrl.value = `http://localhost:5001${supercut.video_url}`;
+                                    currentVideoFilename.value = supercut.video_filename;
+                                    
+                                    await nextTick();
+                                    if (videoPlayer.value) {
+                                        videoPlayer.value.load();
+                                    }
+                                }
+                                
+                                // Extract events from supercut clips
+                                if (supercut.clips && supercut.clips.length > 0) {
+                                    events.value = supercut.clips.map(clip => clip.event).filter(e => e);
+                                }
+                                
+                                // Set supercut and show intro
+                                currentSupercut.value = supercut;
+                                showSupercutIntro.value = true;
+                            }
+                        } catch (error) {
+                            console.error('Error loading supercut from URL:', error);
+                            alert('Could not load shared supercut. It may have been deleted.');
+                        }
+                    }
+                }
+                
+                // Fetch cached videos on mount
+                onMounted(() => {
+                    fetchCachedVideos();
+                    loadSupercutFromUrl();
                 });
 
                     return {
@@ -700,17 +1353,32 @@
                     fileInput,
                     eventRefs,
                     videoUrl,
+                    videoFile,
                     events,
                     isAnalyzing,
                     currentTime,
+                    cachedVideos,
+                    showUploadArea,
+                    showQueryModal,
+                    queryText,
+                    isGeneratingSupercut,
+                    currentSupercut,
+                    showSupercutIntro,
+                    supercutMode,
+                    currentClipIndex,
+                    supercutEvents,
+                    supercutDuration,
+                    supercutCurrentTime,
                     isEventActive,
                     visibleEventCards,
                     activeTacticalOverlays,
                     getCompactInsight,
                     getEventDotColor,
+                    getEventBadgeClass,
                     getTacticalOverlayStyle,
                     getGroundHighlightStyle,
                     formatStat,
+                    formatTime,
                     getPressureColor,
                     getMovementPath,
                     getPressurePosition,
@@ -718,8 +1386,17 @@
                     handleFileSelect,
                     handleDrop,
                     triggerFileInput,
+                    fetchCachedVideos,
+                    loadCachedVideo,
+                    generateSupercut,
+                    startSupercut,
+                    exitSupercutMode,
+                    jumpToClip,
+                    shareSupercut,
+                    loadSupercutFromUrl,
                     onVideoTimeUpdate,
-                    onVideoLoaded
+                    onVideoLoaded,
+                    onVideoEnded
                 };
             }
         }).mount('#app');
