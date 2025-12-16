@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import google.generativeai as genai
-from pass_a_processor import SoccerEventDetector
+from pass_a_processor import NFLEventDetector
 from stats_processor import VideoStatisticsProcessor
 from dotenv import load_dotenv
 
@@ -170,16 +170,17 @@ def analyze_with_gemini(video_path, manifest):
 
     # 3. Construct Targeted Prompt
     # This is the "Gold Standard" efficiency hack. We only ask about the timestamps we found.
-    prompt = "You are a professional soccer analyst providing tactical insights for a premium sports broadcast. "
-    prompt += "I have uploaded a sports video. Computer vision has flagged specific timestamps of interest. "
+    prompt = "You are a professional NFL analyst providing tactical insights for a premium sports broadcast. "
+    prompt += "I have uploaded an NFL football video. Computer vision has flagged specific timestamps of interest. "
     prompt += "For EACH timestamp below, analyze the footage from -2 seconds to +4 seconds around it. "
-    prompt += "Focus heavily on TACTICAL SHAPES, FORMATIONS, and STRATEGIES. Analyze:\n"
-    prompt += "- Team formations (4-3-3, 4-4-2, 3-5-2, etc.) and how they're deployed\n"
-    prompt += "- Defensive shapes (low block, mid-block, high press, zonal vs man-marking)\n"
-    prompt += "- Offensive patterns (build-up play, width usage, overloads, underlaps/overlaps)\n"
-    prompt += "- Player positioning and spacing between lines\n"
-    prompt += "- Tactical transitions (defensive to offensive shape changes)\n"
-    prompt += "- Pressing triggers and defensive coordination\n"
+    prompt += "Focus heavily on TACTICAL FORMATIONS, SCHEMES, and STRATEGIES. Analyze:\n"
+    prompt += "- Offensive formations (Shotgun, Pistol, I-Formation, Spread, etc.) and personnel groupings\n"
+    prompt += "- Defensive schemes (4-3, 3-4, Nickel, Dime, Cover 2, Cover 3, Man coverage, Zone blitz, etc.)\n"
+    prompt += "- Route concepts (Mesh, Levels, Slant-Flat, Post-Corner, etc.) and passing game strategy\n"
+    prompt += "- Running game concepts (Inside Zone, Outside Zone, Power, Counter, etc.)\n"
+    prompt += "- Blitz packages and pressure schemes (A-gap blitz, Edge rush, Stunt, etc.)\n"
+    prompt += "- Pre-snap motion, shifts, and alignment adjustments\n"
+    prompt += "- Down and distance strategy and situational football\n"
     prompt += "Provide ANALYTICAL INSIGHTS about WHY these tactical elements matter in this moment.\n\n"
     
     prompt += "TIMESTAMPS TO ANALYZE:\n"
@@ -195,14 +196,16 @@ def analyze_with_gemini(video_path, manifest):
         "time": "MM:SS",
         "title": "Short Event Title (max 4 words, tactical focus)",
         "desc": "EXACTLY 2 SENTENCES. First sentence: specific tactical observation (formation, shape, pattern). Second sentence: why it matters strategically. Be punchy and direct.",
-        "type": "GOAL",
+        "type": "TOUCHDOWN",
         "stats": {
-          "possession": 55,
-          "possession_team": "Home",
-          "passes": 15,
-          "passes_team": "Away",
-          "speed": "8.4 m/s",
-          "speed_player": "Home #10",
+          "yards": 45,
+          "yards_team": "Home",
+          "down": 3,
+          "distance": 7,
+          "completion_pct": 68.5,
+          "completion_team": "Away",
+          "speed": "22.5 mph",
+          "speed_player": "Home WR #12",
           "pressure": "High",
           "pressure_team": "Away"
         }
@@ -213,19 +216,20 @@ def analyze_with_gemini(video_path, manifest):
     - Return ONLY valid JSON array, no markdown, no code blocks, no explanations
     - "time" format: "MM:SS" (e.g., "01:23")
     - "desc" MUST be EXACTLY 2 sentences (punchy, direct, tactical):
-      * Sentence 1: Specific tactical observation (formation shape, defensive/offensive pattern, player positioning)
-      * Sentence 2: Strategic implication - why this moment matters tactically
+      * Sentence 1: Specific tactical observation (formation, scheme, route concept, defensive alignment, etc.)
+      * Sentence 2: Strategic implication - why this moment matters tactically (down/distance, field position, game situation)
       * Keep it concise and impactful - no fluff
-    - "type" must be one of: "GOAL", "FOUL", "SUBSTITUTION", "NORMAL"
+    - "type" must be one of: "TOUCHDOWN", "PENALTY", "TIMEOUT", "TURNOVER", "NORMAL"
     - "stats" object should include 2-4 of these fields:
-      * "possession": number (0-100, percentage) - REQUIRES "possession_team": string (team name or "Home"/"Away")
-      * "passes": number (count) - REQUIRES "passes_team": string (team name or "Home"/"Away")
-      * "speed": string (e.g., "8.4 m/s" or "30 mph") - REQUIRES "speed_player": string (player description like "Home #10" or "Away Forward")
-      * "distance": string (e.g., "15m") - REQUIRES "distance_player": string (player description)
+      * "yards": number (yards gained/lost on play) - REQUIRES "yards_team": string (team name or "Home"/"Away")
+      * "down": number (1-4, current down) - REQUIRES "distance": number (yards to go)
+      * "completion_pct": number (0-100, completion percentage) - REQUIRES "completion_team": string (team name or "Home"/"Away")
+      * "speed": string (e.g., "22.5 mph" or "10.0 m/s") - REQUIRES "speed_player": string (player description like "Home WR #12" or "Away QB")
       * "pressure": string ("High", "Medium", or "Low") - REQUIRES "pressure_team": string (team applying pressure)
+      * "field_position": string (e.g., "Own 25", "Opponent 40", "Red Zone") - REQUIRES "field_position_team": string (team name)
     - All stats MUST specify which team or player they refer to using the corresponding "_team" or "_player" field
-    - Team names can be: "Home", "Away", or actual team names if visible (e.g., "Barcelona", "Real Madrid")
-    - Player descriptions should include team and position/number if visible (e.g., "Home #10", "Away Forward", "Home Defender")
+    - Team names can be: "Home", "Away", or actual team names if visible (e.g., "Chiefs", "Bills", "49ers")
+    - Player descriptions should include team and position/number if visible (e.g., "Home QB #15", "Away WR #88", "Home DE #99")
     - All stats values must be valid JSON (numbers as numbers, strings as strings)
     - Include realistic stats based on what's visible in the video
 
@@ -233,15 +237,16 @@ def analyze_with_gemini(video_path, manifest):
 
 
     print("🧠 Thinking...")
-    # Start with free-tier model (gemini-1.5-flash) to avoid quota issues
-    # Fallback to other models if needed
+    # Try latest models first, fallback to free-tier if quota issues
+    # Latest as of Dec 2024: Gemini 2.5 series (Pro, Flash, Flash-Lite)
     models_to_try = [
-        'gemini-1.5-flash',      # Free tier, fast, supports video
-        'gemini-1.5-pro',        # Free tier, better quality
+        'gemini-2.5-pro',        # Latest: Most capable, best quality (Sep 2025)
+        'gemini-2.5-flash',      # Latest: Balanced speed/quality
+        'gemini-2.5-flash-lite', # Latest: Cost-optimized variant
+        'gemini-1.5-pro',        # Free tier fallback: Better quality
+        'gemini-1.5-flash',      # Free tier fallback: Fast, supports video
         'gemini-pro-latest',     # Free tier alternative
-        'gemini-flash-latest',   # Latest flash model
-        'gemini-2.5-flash',      # Newer model (may have quota limits)
-        'gemini-2.5-pro'         # Best quality (may have quota limits)
+        'gemini-flash-latest'    # Free tier alternative
     ]
     
     last_error = None
@@ -328,7 +333,7 @@ def test():
 @app.route('/api', methods=['GET'])
 def api_info():
     return jsonify({
-        "service": "Sentinel Backend - Soccer Video Analysis",
+        "service": "Sentinel Backend - NFL Video Analysis",
         "version": "1.0",
         "endpoints": {
             "/analyze": {
@@ -396,7 +401,7 @@ def analyze_video():
             return jsonify(response_data)
         
         # Pass A: Local Vision
-        detector = SoccerEventDetector(filepath)
+        detector = NFLEventDetector(filepath)
         detector.detect_audio_events()
         detector.detect_visual_events()
         manifest = detector.generate_manifest()
@@ -424,7 +429,7 @@ def analyze_video():
         
         # Return JSON response for frontend
         # Response format: Array of event objects
-        # Each event has: { "time": "MM:SS", "title": "...", "desc": "...", "type": "GOAL|FOUL|SUBSTITUTION|NORMAL" }
+        # Each event has: { "time": "MM:SS", "title": "...", "desc": "...", "type": "TOUCHDOWN|PENALTY|TIMEOUT|TURNOVER|NORMAL" }
         return jsonify({
             "success": True,
             "events": final_events,

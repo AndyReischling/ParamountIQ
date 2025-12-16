@@ -38,3 +38,4 @@ server.log
 # OS
 .DS_Store
 Thumbs.db
+*.mp4

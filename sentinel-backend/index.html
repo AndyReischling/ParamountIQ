@@ -127,14 +127,17 @@
         }
         
         /* Type badges */
-        .badge-GOAL {
+        .badge-TOUCHDOWN {
             background: #10b981;
         }
-        .badge-FOUL {
+        .badge-PENALTY {
             background: #f59e0b;
         }
-        .badge-SUBSTITUTION {
+        .badge-TIMEOUT {
             background: #3b82f6;
+        }
+        .badge-TURNOVER {
+            background: #ef4444;
         }
         .badge-NORMAL {
             background: #64748b;
@@ -219,7 +222,7 @@
                             :style="getTacticalOverlayStyle(event, index)"
                         >
                             <!-- Movement Lines Overlay -->
-                            <svg v-if="event.stats && (event.type === 'GOAL' || event.type === 'FOUL')" 
+                            <svg v-if="event.stats && (event.type === 'TOUCHDOWN' || event.type === 'PENALTY' || event.type === 'TURNOVER')" 
                                  class="absolute -inset-20 w-[140%] h-[140%]" 
                                  style="pointer-events: none; overflow: visible;">
                                 <!-- Player movement path (curved line) -->
@@ -235,8 +238,8 @@
                                 
                                 <!-- Arrow head at end of path -->
                                 <circle 
-                                    :cx="event.type === 'GOAL' ? '80%' : '70%'"
-                                    :cy="event.type === 'GOAL' ? '30%' : '55%'"
+                                    :cx="event.type === 'TOUCHDOWN' ? '80%' : event.type === 'TURNOVER' ? '75%' : '70%'"
+                                    :cy="event.type === 'TOUCHDOWN' ? '30%' : event.type === 'TURNOVER' ? '40%' : '55%'"
                                     r="3"
                                     fill="#0064FF"
                                     opacity="0.8"
@@ -252,19 +255,25 @@
                                 
                                 <!-- Key Stats Display -->
                                 <div v-if="event.stats" class="space-y-0.5">
-                                    <div v-if="event.stats.possession" class="flex flex-col gap-0.5">
+                                    <div v-if="event.stats.yards" class="flex flex-col gap-0.5">
                                         <div class="flex items-center justify-between gap-2">
-                                            <span class="text-[8px] text-slate-400 uppercase">POS</span>
-                                            <span class="text-[10px] font-mono text-[#0064FF] font-semibold">{{ formatStat(event.stats.possession) }}%</span>
+                                            <span class="text-[8px] text-slate-400 uppercase">YDS</span>
+                                            <span class="text-[10px] font-mono text-[#0064FF] font-semibold">{{ formatStat(event.stats.yards) }}</span>
                                         </div>
-                                        <div v-if="event.stats.possession_team" class="text-[7px] text-slate-500 italic">{{ event.stats.possession_team }}</div>
+                                        <div v-if="event.stats.yards_team" class="text-[7px] text-slate-500 italic">{{ event.stats.yards_team }}</div>
                                     </div>
-                                    <div v-if="event.stats.passes" class="flex flex-col gap-0.5">
+                                    <div v-if="event.stats.down" class="flex flex-col gap-0.5">
                                         <div class="flex items-center justify-between gap-2">
-                                            <span class="text-[8px] text-slate-400 uppercase">PASS</span>
-                                            <span class="text-[10px] font-mono text-white">{{ formatStat(event.stats.passes) }}</span>
+                                            <span class="text-[8px] text-slate-400 uppercase">DOWN</span>
+                                            <span class="text-[10px] font-mono text-white">{{ event.stats.down }} & {{ event.stats.distance }}</span>
                                         </div>
-                                        <div v-if="event.stats.passes_team" class="text-[7px] text-slate-500 italic">{{ event.stats.passes_team }}</div>
+                                    </div>
+                                    <div v-if="event.stats.completion_pct" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">CMP%</span>
+                                            <span class="text-[10px] font-mono text-white">{{ formatStat(event.stats.completion_pct) }}%</span>
+                                        </div>
+                                        <div v-if="event.stats.completion_team" class="text-[7px] text-slate-500 italic">{{ event.stats.completion_team }}</div>
                                     </div>
                                     <div v-if="event.stats.speed" class="flex flex-col gap-0.5">
                                         <div class="flex items-center justify-between gap-2">
@@ -273,13 +282,6 @@
                                         </div>
                                         <div v-if="event.stats.speed_player" class="text-[7px] text-slate-500 italic">{{ event.stats.speed_player }}</div>
                                     </div>
-                                    <div v-if="event.stats.distance" class="flex flex-col gap-0.5">
-                                        <div class="flex items-center justify-between gap-2">
-                                            <span class="text-[8px] text-slate-400 uppercase">DIST</span>
-                                            <span class="text-[10px] font-mono text-white">{{ event.stats.distance }}</span>
-                                        </div>
-                                        <div v-if="event.stats.distance_player" class="text-[7px] text-slate-500 italic">{{ event.stats.distance_player }}</div>
-                                    </div>
                                     <div v-if="event.stats.pressure" class="flex flex-col gap-0.5">
                                         <div class="flex items-center justify-between gap-2">
                                             <span class="text-[8px] text-slate-400 uppercase">PRESS</span>
@@ -287,11 +289,18 @@
                                         </div>
                                         <div v-if="event.stats.pressure_team" class="text-[7px] text-slate-500 italic">{{ event.stats.pressure_team }}</div>
                                     </div>
+                                    <div v-if="event.stats.field_position" class="flex flex-col gap-0.5">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[8px] text-slate-400 uppercase">FPOS</span>
+                                            <span class="text-[10px] font-mono text-white">{{ event.stats.field_position }}</span>
+                                        </div>
+                                        <div v-if="event.stats.field_position_team" class="text-[7px] text-slate-500 italic">{{ event.stats.field_position_team }}</div>
+                                    </div>
                                 </div>
                             </div>
                             
                             <!-- Ground Highlight Circle (for key events) -->
-                            <div v-if="event.type === 'GOAL' || event.type === 'FOUL'" 
+                            <div v-if="event.type === 'TOUCHDOWN' || event.type === 'PENALTY' || event.type === 'TURNOVER'" 
                                  class="absolute"
                                  :style="getGroundHighlightStyle(event.type)">
                                 <div class="w-16 h-16 border border-[#0064FF]/40 rounded-full animate-pulse">
@@ -344,13 +353,17 @@
                             
                             <!-- Statistics Display -->
                             <div v-if="event.stats" class="grid grid-cols-2 gap-1.5 mt-2 pt-2 border-t border-[#1e293b]">
-                                <div v-if="event.stats.possession" class="flex items-center gap-1">
-                                    <span class="text-[9px] text-slate-500 uppercase">POS</span>
-                                    <span class="text-[10px] font-mono text-[#0064FF]">{{ formatStat(event.stats.possession) }}%</span>
+                                <div v-if="event.stats.yards" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">YDS</span>
+                                    <span class="text-[10px] font-mono text-[#0064FF]">{{ formatStat(event.stats.yards) }}</span>
                                 </div>
-                                <div v-if="event.stats.passes" class="flex items-center gap-1">
-                                    <span class="text-[9px] text-slate-500 uppercase">PASS</span>
-                                    <span class="text-[10px] font-mono text-white">{{ formatStat(event.stats.passes) }}</span>
+                                <div v-if="event.stats.down" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">DOWN</span>
+                                    <span class="text-[10px] font-mono text-white">{{ event.stats.down }} & {{ event.stats.distance }}</span>
+                                </div>
+                                <div v-if="event.stats.completion_pct" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">CMP%</span>
+                                    <span class="text-[10px] font-mono text-white">{{ formatStat(event.stats.completion_pct) }}%</span>
                                 </div>
                                 <div v-if="event.stats.speed" class="flex items-center gap-1">
                                     <span class="text-[9px] text-slate-500 uppercase">SPD</span>
@@ -363,9 +376,13 @@
                                     <div class="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50">
                                         <div class="bg-[#020617] border border-[#0064FF]/40 rounded-lg px-2 py-1 text-[9px] text-slate-300 shadow-xl max-w-[180px]">
                                             <div class="font-semibold text-[#0064FF] mb-0.5">PRS = Pressure</div>
-                                            <div>Defensive pressure intensity: High = intense pressing, Medium = moderate, Low = passive</div>
+                                            <div>Defensive pressure intensity: High = blitz/heavy rush, Medium = moderate pressure, Low = coverage drop</div>
                                         </div>
                                     </div>
+                                </div>
+                                <div v-if="event.stats.field_position" class="flex items-center gap-1">
+                                    <span class="text-[9px] text-slate-500 uppercase">FPOS</span>
+                                    <span class="text-[10px] font-mono text-white">{{ event.stats.field_position }}</span>
                                 </div>
                             </div>
                         </div>
@@ -433,7 +450,7 @@
                 function getCompactInsight(event) {
                     const desc = event.desc || '';
                     const sentences = desc.split(/[.!?]+/).filter(s => s.trim());
-                    const tacticalKeywords = ['formation', 'tactical', 'positioning', 'press', 'space', 'defensive', 'offensive', 'strategy', 'shape', 'line'];
+                    const tacticalKeywords = ['formation', 'tactical', 'scheme', 'blitz', 'coverage', 'route', 'defensive', 'offensive', 'strategy', 'alignment', 'down', 'distance'];
                     
                     // Find most tactical sentence
                     for (const sentence of sentences) {
@@ -452,9 +469,10 @@
                 // Get event dot color
                 function getEventDotColor(type) {
                     const colors = {
-                        'GOAL': 'bg-green-500',
-                        'FOUL': 'bg-yellow-500',
-                        'SUBSTITUTION': 'bg-blue-500',
+                        'TOUCHDOWN': 'bg-green-500',
+                        'PENALTY': 'bg-yellow-500',
+                        'TIMEOUT': 'bg-blue-500',
+                        'TURNOVER': 'bg-red-500',
                         'NORMAL': 'bg-slate-500'
                     };
                     return colors[type] || 'bg-slate-500';
@@ -486,8 +504,9 @@
                 function getGroundHighlightStyle(eventType) {
                     // Position highlight circles on field areas (not blocking key action)
                     const positions = {
-                        'GOAL': { bottom: '25%', left: '45%' },      // Near goal area
-                        'FOUL': { bottom: '35%', left: '50%', transform: 'translateX(-50%)' }, // Center field
+                        'TOUCHDOWN': { bottom: '25%', left: '45%' },      // Near end zone
+                        'PENALTY': { bottom: '35%', left: '50%', transform: 'translateX(-50%)' }, // Center field
+                        'TURNOVER': { bottom: '40%', left: '50%', transform: 'translateX(-50%)' }, // Center field
                     };
                     
                     return positions[eventType] || { bottom: '30%', left: '50%', transform: 'translateX(-50%)' };
@@ -517,8 +536,9 @@
                 function getMovementPath(eventType, index) {
                     // Create a curved path based on event type
                     const paths = {
-                        'GOAL': `M 20% 60% Q 50% 40%, 80% 30%`,  // Forward attacking movement
-                        'FOUL': `M 30% 50% Q 50% 60%, 70% 55%`,  // Defensive pressure
+                        'TOUCHDOWN': `M 20% 60% Q 50% 40%, 80% 30%`,  // Forward offensive movement
+                        'PENALTY': `M 30% 50% Q 50% 60%, 70% 55%`,  // Defensive pressure
+                        'TURNOVER': `M 25% 45% Q 50% 50%, 75% 55%`,  // Change of possession
                     };
                     
                     // Vary path slightly for multiple events
@@ -529,7 +549,7 @@
                 // Get pressure position on field
                 function getPressurePosition(pressure) {
                     const positions = {
-                        'High': { x: 45, y: 35 },      // Near goal
+                        'High': { x: 45, y: 35 },      // Near end zone
                         'Medium': { x: 50, y: 50 },   // Midfield
                         'Low': { x: 55, y: 65 }       // Defensive third
                     };

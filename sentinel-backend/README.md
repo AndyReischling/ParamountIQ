@@ -1,10 +1,10 @@
-# Sentinel Backend - Soccer Video Analysis
+# Sentinel Backend - NFL Video Analysis
 
-A Flask-based backend service that analyzes soccer videos using Google's Gemini AI and computer vision to detect events, track ball/player movement, and provide tactical insights.
+A Flask-based backend service that analyzes NFL football videos using Google's Gemini AI and computer vision to detect events, track ball/player movement, and provide tactical insights.
 
 ## Features
 
-- 🎥 **Video Analysis**: Upload soccer videos for automated event detection
+- 🎥 **Video Analysis**: Upload NFL videos for automated event detection
 - 🧠 **AI-Powered Insights**: Uses Google Gemini AI for tactical analysis
 - 📊 **Statistics Tracking**: Tracks ball and player movement throughout the video
 - 🎧 **Audio Detection**: Detects whistles and crowd reactions
@@ -96,7 +96,7 @@ curl -X POST -F "video=@path/to/your/video.mp4" http://localhost:5001/analyze
   "events": [
     {
       "time": "01:23",
-      "title": "Tactical Formation Shift",
+      "title": "Blitz Package Called",
       "desc": "Team transitions from 4-3-3 to 4-4-2 defensive block. This creates numerical superiority in midfield.",
       "type": "NORMAL",
       "stats": {
@@ -149,7 +149,8 @@ sentinel-backend/
 2. **Pass B - Gemini AI**:
    - Uploads video to Google Gemini
    - Analyzes specific timestamps identified in Pass A
-   - Generates tactical insights and event descriptions
+   - Generates tactical insights about formations, schemes, and strategies
+   - Identifies NFL-specific events (touchdowns, penalties, timeouts, turnovers)
 
 3. **Background Processing**:
    - Tracks ball and player movement

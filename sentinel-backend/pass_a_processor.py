@@ -6,7 +6,7 @@ import os
 from scipy.signal import butter, lfilter
 
 
-class SoccerEventDetector:
+class NFLEventDetector:
 
     def __init__(self, video_path):
         self.video_path = video_path
@@ -24,7 +24,7 @@ class SoccerEventDetector:
 
 
     def detect_audio_events(self):
-        print("🎧 Analyzing Audio (Whistles & Crowd)...")
+        print("🎧 Analyzing Audio (Whistles & Crowd Reactions)...")
         try:
             # Load audio (mono) - optimize by loading only first 5 mins if file is huge
             y, sr = librosa.load(self.video_path, sr=22050, mono=True)
@@ -54,7 +54,7 @@ class SoccerEventDetector:
                     self.events.append({
                         "seconds": round(timestamp, 2),
                         "type": "audio_whistle",
-                        "desc": "High pitch audio spike (Potential Whistle/Foul)"
+                        "desc": "High pitch audio spike (Potential Whistle/Penalty)"
                     })
                     curr_time = timestamp
         except Exception as e:

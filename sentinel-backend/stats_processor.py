@@ -191,7 +191,7 @@ class BallTracker:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
-        # Ball detection: look for white/yellow objects (typical soccer ball colors)
+        # Ball detection: look for white/brown objects (typical football colors)
         # White ball range
         lower_white = np.array([0, 0, 200])
         upper_white = np.array([180, 30, 255])
@@ -295,7 +295,7 @@ class PlayerTracker:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         
         # Player detection: look for non-green objects (players vs field)
-        # Green field range (typical soccer field)
+        # Green field range (typical football field)
         lower_green = np.array([40, 50, 50])
         upper_green = np.array([80, 255, 255])
         mask_green = cv2.inRange(hsv, lower_green, upper_green)

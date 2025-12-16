@@ -17,15 +17,15 @@
   "events": [
     {
       "time": "01:23",
-      "title": "Goal Scored",
-      "desc": "Player #10 scores from outside the box",
-      "type": "GOAL"
+      "title": "Touchdown Scored",
+      "desc": "WR #12 catches 45-yard pass in end zone",
+      "type": "TOUCHDOWN"
     },
     {
       "time": "05:45",
-      "title": "Foul Called",
-      "desc": "Yellow card shown to defender",
-      "type": "FOUL"
+      "title": "Penalty Called",
+      "desc": "Defensive holding penalty on cornerback",
+      "type": "PENALTY"
     }
   ],
   "count": 2,
@@ -42,9 +42,10 @@
 ```
 
 ### Event Types
-- `GOAL` - A goal was scored
-- `FOUL` - A foul was called
-- `SUBSTITUTION` - A player substitution occurred
+- `TOUCHDOWN` - A touchdown was scored
+- `PENALTY` - A penalty was called
+- `TIMEOUT` - A timeout was called
+- `TURNOVER` - A turnover occurred (fumble, interception)
 - `NORMAL` - Regular play or replay
 
 ## Frontend Integration Examples

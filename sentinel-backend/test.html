@@ -112,16 +112,20 @@
             font-size: 12px;
             margin-left: 10px;
         }
-        .event-type.GOAL {
+        .event-type.TOUCHDOWN {
             background-color: #4CAF50;
             color: white;
         }
-        .event-type.FOUL {
+        .event-type.PENALTY {
             background-color: #ff9800;
             color: white;
         }
-        .event-type.SUBSTITUTION {
+        .event-type.TIMEOUT {
             background-color: #2196F3;
+            color: white;
+        }
+        .event-type.TURNOVER {
+            background-color: #f44336;
             color: white;
         }
         .event-type.NORMAL {
@@ -141,7 +145,7 @@
 <body>
     <div class="container">
         <h1>⚽ Sentinel Backend</h1>
-        <p class="subtitle">Upload a soccer video to analyze events (goals, fouls, substitutions)</p>
+        <p class="subtitle">Upload an NFL video to analyze events (touchdowns, penalties, timeouts, turnovers)</p>
         
         <div class="upload-area" id="uploadArea">
             <p>📹 Drag and drop a video file here, or click to select</p>
